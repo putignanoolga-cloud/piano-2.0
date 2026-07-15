@@ -3,309 +3,58 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Caleea Planner</title>
-
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-
-<style>
-
-body {
-  font-family: 'Inter', sans-serif;
-  background: #f8f6f3;
-  margin: 0;
-  padding: 30px;
-  color: #2b2b2b;
-}
-
-h1 {
-  font-weight: 500;
-  margin-bottom: 5px;
-}
-
-.subtitle {
-  opacity: 0.5;
-  margin-bottom: 25px;
-}
-
-.container {
-  max-width: 1100px;
-  margin: auto;
-  display: flex;
-  gap: 30px;
-}
-
-.left, .right {
-  flex: 1;
-}
-
-.card {
-  background: #ffffff;
-  padding: 20px;
-  border-radius: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.04);
-}
-
-.task {
-  display: flex;
-  align-items: center;
-  margin-bottom: 12px;
-  transition: all 0.2s ease;
-}
-
-.task:hover {
-  transform: translateX(3px);
-}
-
-.subtask {
-  margin-left: 35px;
-  font-size: 14px;
-  opacity: 0.7;
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 10px;
-}
-
-input[type="checkbox"] {
-  margin-right: 10px;
-  transform: scale(1.1);
-  cursor: pointer;
-}
-
-.task span {
-  flex: 1;
-}
-
-button {
-  border: none;
-  background: #f1ece6;
-  padding: 6px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-button:hover {
-  background: #e7dfd7;
-}
-
-input, select {
-  width: 100%;
-  padding: 10px;
-  margin-top: 10px;
-  border-radius: 10px;
-  border: 1px solid #e5e0da;
-  background: #faf9f7;
-}
-
-.completed {
-  text-decoration: line-through;
-  opacity: 0.4;
-}
-
-/* CALENDARIO */
-
-.calendar {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 10px;
-}
-
-.day {
-  padding: 12px;
-  border-radius: 12px;
-  text-align: center;
-  cursor: pointer;
-  background: #f4f1ec;
-  position: relative;
-  font-size: 14px;
-  transition: 0.2s;
-}
-
-.day:hover {
-  background: #ece6de;
-}
-
-.day.active {
-  background: #e7dfd7;
-}
-
-.dot-small {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  position: absolute;
-  bottom: 6px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-/* HEADER */
-
-.header {
-  max-width: 1100px;
-  margin: auto;
-  margin-bottom: 20px;
-}
-
-</style>
+<title>Piano Finanziario</title>
+<meta name="description" content="Il tuo centro di controllo finanziario personale: budget, entrate e spese, obiettivi, fondo emergenza, patrimonio netto e analisi, tutto in un'unica web app.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%99%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
 </head>
-
 <body>
 
-<div class="header">
-  <h1>Bentornata ✨</h1>
-  <div class="subtitle" id="today"></div>
+<div class="app-shell">
+  <div class="sidebar-scrim" id="scrim"></div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand"><span class="mark">🪙</span> Piano Finanziario</div>
+    <nav class="sidebar-nav" id="sidebarNav"></nav>
+    <div class="sidebar-foot">I tuoi dati restano solo nel tuo browser.</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <button class="hamburger" id="hamburger" aria-label="Menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+        </button>
+        <div><h1 id="pageTitle">Home</h1></div>
+      </div>
+      <div class="topbar-actions">
+        <div class="month-control">
+          <label for="globalMonth">Mese di riferimento</label>
+          <input type="month" id="globalMonth">
+        </div>
+      </div>
+    </header>
+
+    <main class="view" id="viewRoot"></main>
+  </div>
 </div>
 
-<div class="container">
+<div class="toast-container" id="toastContainer"></div>
 
-  <div class="left">
-
-    <div class="card">
-      <h3>Le tue priorità</h3>
-      <div id="taskList"></div>
-
-      <input id="taskInput" placeholder="Scrivi una nuova priorità...">
-      <input type="date" id="taskDate">
-      <button onclick="addTask()">Aggiungi</button>
-    </div>
-
-    <div class="card">
-      <h3>Archivio</h3>
-      <div id="archiveList"></div>
-    </div>
-
-  </div>
-
-  <div class="right">
-
-    <div class="card">
-      <h3>Calendario</h3>
-      <div class="calendar" id="calendar"></div>
-    </div>
-
-  </div>
-
-</div>
-
-<script>
-
-let tasks = JSON.parse(localStorage.getItem("tasks") || "[]");
-let selectedDate = null;
-
-const colors = ["#f2c94c","#6fcf97","#eb5757","#bb6bd9","#56ccf2","#f2994a","#2f80ed"];
-
-function todayText() {
-  const d = new Date();
-  document.getElementById("today").innerText =
-    d.toLocaleDateString("it-IT", { weekday: 'long', day: 'numeric', month: 'long' });
-}
-
-function save() {
-  localStorage.setItem("tasks", JSON.stringify(tasks));
-}
-
-function addTask() {
-  const text = taskInput.value;
-  const date = taskDate.value;
-  if (!text || !date) return;
-
-  tasks.push({ text, date, completed:false, subtasks:[] });
-  taskInput.value = "";
-  save();
-  render();
-}
-
-function addSubtask(i) {
-  const text = prompt("Sotto-priorità:");
-  if (!text) return;
-  tasks[i].subtasks.push({ text, completed:false });
-  save();
-  render();
-}
-
-function completeTask(i, si=null) {
-  if (si===null) tasks[i].completed = true;
-  else tasks[i].subtasks[si].completed = true;
-  save();
-  render();
-}
-
-function render() {
-  taskList.innerHTML="";
-  archiveList.innerHTML="";
-
-  tasks.forEach((t,i)=>{
-    if (selectedDate && t.date!==selectedDate) return;
-
-    const color = colors[new Date(t.date).getDay()];
-
-    const el = document.createElement("div");
-    el.className="task";
-
-    el.innerHTML=`
-      <span class="dot" style="background:${color}"></span>
-      <input type="checkbox" ${t.completed?"checked":""} onchange="completeTask(${i})">
-      <span>${t.text}</span>
-      <button onclick="addSubtask(${i})">+</button>
-    `;
-
-    (t.completed?archiveList:taskList).appendChild(el);
-
-    t.subtasks.forEach((s,si)=>{
-      const sub=document.createElement("div");
-      sub.className="task subtask";
-
-      sub.innerHTML=`
-        <input type="checkbox" ${s.completed?"checked":""} onchange="completeTask(${i},${si})">
-        <span>${s.text}</span>
-      `;
-
-      (s.completed?archiveList:taskList).appendChild(sub);
-    });
-  });
-
-  renderCalendar();
-}
-
-function renderCalendar() {
-  calendar.innerHTML="";
-
-  for(let i=1;i<=30;i++){
-    const date=`2024-05-${String(i).padStart(2,"0")}`;
-
-    const d=document.createElement("div");
-    d.className="day";
-    d.innerText=i;
-
-    if(date===selectedDate) d.classList.add("active");
-
-    const task=tasks.find(t=>t.date===date);
-    if(task){
-      const dot=document.createElement("div");
-      dot.className="dot-small";
-      dot.style.background=colors[new Date(date).getDay()];
-      d.appendChild(dot);
-    }
-
-    d.onclick=()=>{
-      selectedDate=date;
-      render();
-    };
-
-    calendar.appendChild(d);
-  }
-}
-
-todayText();
-render();
-
-</script>
-
+<script src="js/utils.js"></script>
+<script src="js/store.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/components.js"></script>
+<script src="js/views/home.js"></script>
+<script src="js/views/dashboard.js"></script>
+<script src="js/views/settings.js"></script>
+<script src="js/views/ledgers.js"></script>
+<script src="js/views/budget.js"></script>
+<script src="js/views/goals.js"></script>
+<script src="js/views/networth.js"></script>
+<script src="js/views/analysis.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
