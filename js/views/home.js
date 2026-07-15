@@ -12,10 +12,12 @@
     const accantonato = Calc.accantonatoResiduo();
     const obiettivi = Store.state.obiettivi.slice(0, 3);
     const scadenze = Calc.scadenze().filter(s => s.avviso !== "").slice(0, 3);
+    const primoNome = (Store.state.profilo.nome || "").trim().split(/\s+/)[0];
+    const budgetGruppi = Calc.redditoBaseBudget() > 0 ? Calc.budgetPerGruppo(mese) : null;
 
     root.innerHTML = `
       <div class="view-head">
-        <h2>Ciao! 👋</h2>
+        <h2>Ciao${primoNome ? " " + U.escapeHtml(primoNome) : ""}! 👋</h2>
         <p class="lede">Ecco la tua situazione a colpo d'occhio — ${U.formatMonthLabel(mese)}.</p>
       </div>
 
@@ -36,6 +38,19 @@
         ${hasPIVA ? UI.statTile({ label: "Accantonato per tasse", value: U.formatCurrency(accantonato), sub: "da non spendere" }) : ""}
         ${UI.statTile({ label: "Disponibile", value: U.formatCurrency(disponibile), accent: true, sub: hasPIVA ? "al netto delle tasse accantonate" : null })}
       </div>
+
+      ${budgetGruppi ? `
+        <div class="section-title">Il tuo budget del mese</div>
+        <div class="card section">
+          ${budgetGruppi.map(g => `
+            <div style="margin-bottom:14px">
+              <div class="progress-label"><span>${U.escapeHtml(g.gruppo)}</span><span class="muted">${U.formatCurrency(g.speso)} / ${U.formatCurrency(g.budget)}</span></div>
+              ${UI.progress(g.pctUsata, { color: g.pctUsata > 0.85 ? "var(--status-critical-text)" : Charts.colorForGruppo(g.gruppo) })}
+            </div>
+          `).join("")}
+          <p class="help" style="margin-top:2px">Basato sul reddito mensile e sulle percentuali che hai scelto — modificabili dall'icona ⚙️.</p>
+        </div>
+      ` : ""}
 
       <div class="row section">
         <div class="card" style="flex:1">

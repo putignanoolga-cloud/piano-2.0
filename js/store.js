@@ -10,12 +10,33 @@
   const STORAGE_KEY = "pianoFinanziario:v2";
 
   const CATEGORIE_ENTRATA = ["Stipendio", "Fattura (Partita IVA)", "Rimborso", "Altro"];
-  const CATEGORIE_USCITA = ["Casa", "Bollette", "Spesa", "Trasporti", "Salute", "Svago", "Tasse e Contributi", "Altro"];
+  const CATEGORIE_USCITA = ["Casa", "Bollette", "Spesa", "Trasporti", "Salute", "Svago", "Risparmio/Investimenti", "Tasse e Contributi", "Altro"];
   const CATEGORIA_FATTURA = "Fattura (Partita IVA)";
   const CATEGORIA_TASSE = "Tasse e Contributi";
 
+  const GRUPPI = ["Necessità", "Svaghi", "Risparmio"];
+  const GRUPPO_PER_CATEGORIA = {
+    "Casa": "Necessità", "Bollette": "Necessità", "Spesa": "Necessità", "Trasporti": "Necessità",
+    "Salute": "Necessità", "Tasse e Contributi": "Necessità", "Altro": "Necessità",
+    "Svago": "Svaghi",
+    "Risparmio/Investimenti": "Risparmio"
+  };
+
+  const PRESET_PERCENTUALI = [
+    { id: "equilibrato", label: "Equilibrato", nota: "la regola più conosciuta", necessita: 0.5, svaghi: 0.3, risparmio: 0.2 },
+    { id: "essenziale", label: "Essenziale", nota: "vita quotidiana più cara", necessita: 0.7, svaghi: 0.15, risparmio: 0.15 },
+    { id: "risparmiatore", label: "Risparmiatore", nota: "spendi poco, metti via tanto", necessita: 0.4, svaghi: 0.3, risparmio: 0.3 }
+  ];
+
   function defaultState() {
     return {
+      profilo: {
+        nome: "",
+        tipo: null, // 'dipendente' | 'partita_iva'
+        redditoMensile: 0,
+        pctNecessita: 0.5, pctSvaghi: 0.3, pctRisparmio: 0.2,
+        completato: false
+      },
       settings: {
         accantonamentoPct: 0.30
       },
@@ -38,6 +59,7 @@
   function migrate(state) {
     const d = defaultState();
     const merged = Object.assign({}, d, state || {});
+    merged.profilo = Object.assign({}, d.profilo, (state && state.profilo) || {});
     merged.settings = Object.assign({}, d.settings, (state && state.settings) || {});
     ["movimenti", "obiettivi", "scadenze"].forEach(k => { if (!Array.isArray(merged[k])) merged[k] = d[k]; });
     return merged;
@@ -60,7 +82,7 @@
     reset() { this.state = defaultState(); this.save(); },
     exportJSON() { return JSON.stringify(this.state, null, 2); },
     importJSON(str) { this.state = migrate(JSON.parse(str)); this.save(); },
-    CATEGORIE_ENTRATA, CATEGORIE_USCITA, CATEGORIA_FATTURA, CATEGORIA_TASSE
+    CATEGORIE_ENTRATA, CATEGORIE_USCITA, CATEGORIA_FATTURA, CATEGORIA_TASSE, GRUPPI, PRESET_PERCENTUALI
   };
 
   const Calc = {
@@ -75,7 +97,9 @@
     usciteMese(monthISO) { return U.sum(this.inMonth(this.uscite(), monthISO), m => m.importo); },
 
     // Partita IVA tax set-aside -------------------------------------------
-    hasPartitaIVA() { return this.entrate().some(m => m.categoria === Store.CATEGORIA_FATTURA); },
+    // The declared profile is the source of truth (set once during onboarding,
+    // editable in Impostazioni) rather than inferring it from transaction history.
+    hasPartitaIVA() { return Store.state.profilo.tipo === "partita_iva"; },
     accantonatoStorico() {
       const fatture = this.entrate().filter(m => m.categoria === Store.CATEGORIA_FATTURA);
       return U.sum(fatture, m => m.importo) * (Number(Store.state.settings.accantonamentoPct) || 0);
@@ -91,6 +115,33 @@
     },
     disponibile() {
       return this.saldoTotale() - this.accantonatoResiduo();
+    },
+
+    // Budget per gruppo (dal profilo impostato nel tour iniziale) ------------
+    redditoBaseBudget() {
+      const p = Store.state.profilo;
+      const r = Number(p.redditoMensile) || 0;
+      if (p.tipo === "partita_iva") return r * (1 - (Number(Store.state.settings.accantonamentoPct) || 0));
+      return r;
+    },
+    budgetGruppo(gruppo) {
+      const p = Store.state.profilo;
+      const base = this.redditoBaseBudget();
+      if (gruppo === "Necessità") return base * (Number(p.pctNecessita) || 0);
+      if (gruppo === "Svaghi") return base * (Number(p.pctSvaghi) || 0);
+      return base * (Number(p.pctRisparmio) || 0);
+    },
+    gruppoDiCategoria(categoria) { return GRUPPO_PER_CATEGORIA[categoria] || "Necessità"; },
+    speseGruppoMese(gruppo, monthISO) {
+      const rows = this.inMonth(this.uscite(), monthISO).filter(m => this.gruppoDiCategoria(m.categoria) === gruppo);
+      return U.sum(rows, m => m.importo);
+    },
+    budgetPerGruppo(monthISO) {
+      return GRUPPI.map(gruppo => {
+        const budget = this.budgetGruppo(gruppo);
+        const speso = this.speseGruppoMese(gruppo, monthISO);
+        return { gruppo, budget, speso, pctUsata: budget ? speso / budget : 0 };
+      });
     },
 
     // Obiettivi ------------------------------------------------------------
