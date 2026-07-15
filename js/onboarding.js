@@ -178,10 +178,13 @@
     }
 
     function finish() {
+      const isFirstRun = !Store.state.profilo.nome && !Store.state.profilo.tipo;
+      const importo = Number(draft.redditoMensile) || 0;
+
       Object.assign(Store.state.profilo, {
         nome: draft.nome.trim(),
         tipo: draft.tipo,
-        redditoMensile: Number(draft.redditoMensile) || 0,
+        redditoMensile: importo,
         pctNecessita: draft.pctNecessita,
         pctSvaghi: draft.pctSvaghi,
         pctRisparmio: draft.pctRisparmio,
@@ -190,6 +193,23 @@
       if (draft.tipo === "partita_iva") {
         Store.state.settings.accantonamentoPct = U.clamp(parseFloat(draft.accantonamentoPct) || 0, 0, 100) / 100;
       }
+
+      // The income entered here must show up immediately as a real transaction -
+      // otherwise the Home totals (accantonato, disponibile) stay disconnected
+      // from what was just declared. On first setup, swap the demo movimenti for
+      // one real entrata matching the answers just given.
+      if (isFirstRun && importo > 0) {
+        Store.state.movimenti = [{
+          id: U.uid(),
+          tipo: "entrata",
+          data: U.firstOfMonthISO(U.todayISO()),
+          descrizione: draft.tipo === "partita_iva" ? "Fattura" : "Stipendio",
+          categoria: draft.tipo === "partita_iva" ? Store.CATEGORIA_FATTURA : "Stipendio",
+          importo,
+          note: "Aggiunta automaticamente dalla configurazione iniziale"
+        }];
+      }
+
       Store.save();
       onComplete();
     }
