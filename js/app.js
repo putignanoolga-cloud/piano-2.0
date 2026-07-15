@@ -4,39 +4,23 @@
 
   const NAV = [
     { hash: "home", label: "Home", icon: "home" },
-    { hash: "dashboard", label: "Dashboard", icon: "grid" },
-    { hash: "impostazioni", label: "Impostazioni", icon: "sliders" },
-    { group: "Registri", hash: "entrate", label: "Registro Entrate", icon: "arrowDown" },
-    { group: "Registri", hash: "spese", label: "Registro Spese", icon: "arrowUp" },
-    { group: "Budget", hash: "budget", label: "Budget", icon: "pie" },
-    { group: "Budget", hash: "permettermi", label: "Quanto Posso Permettermi", icon: "calculator" },
-    { group: "Obiettivi", hash: "obiettivi", label: "Obiettivi Finanziari", icon: "target" },
-    { group: "Obiettivi", hash: "fondo-emergenza", label: "Fondo Emergenza", icon: "shield" },
-    { group: "Patrimonio", hash: "patrimonio", label: "Patrimonio Netto", icon: "bank" },
-    { group: "Patrimonio", hash: "abbonamenti", label: "Abbonamenti", icon: "repeat" },
-    { group: "Patrimonio", hash: "calendario", label: "Calendario Pagamenti", icon: "calendar" },
-    { hash: "analisi", label: "Analisi", icon: "activity" }
+    { hash: "movimenti", label: "Entrate e Uscite", icon: "wallet" },
+    { hash: "scadenze", label: "Scadenze", icon: "calendar" },
+    { hash: "obiettivi", label: "Obiettivi", icon: "target" }
   ];
 
   const sidebar = document.getElementById("sidebar");
   const scrim = document.getElementById("scrim");
   const viewRoot = document.getElementById("viewRoot");
   const pageTitle = document.getElementById("pageTitle");
-  const globalMonth = document.getElementById("globalMonth");
   let activeRender = null;
 
   function navHtml() {
-    let html = "", lastGroup = null;
-    NAV.forEach(item => {
-      if (item.group && item.group !== lastGroup) { html += `<div class="nav-section-label">${item.group}</div>`; }
-      lastGroup = item.group || null;
-      html += `<button class="nav-item" data-hash="${item.hash}">${UI.icon(item.icon)}<span>${item.label}</span></button>`;
-    });
-    return html;
+    return NAV.map(item => `<button class="nav-item" data-hash="${item.hash}">${UI.icon(item.icon)}<span>${item.label}</span></button>`).join("");
   }
 
   function currentKey() {
-    const h = location.hash.replace(/^#\/?/, "");
+    const h = location.hash.replace(/^#\/?/, "").split("?")[0];
     return NAV.some(n => n.hash === h) ? h : "home";
   }
 
@@ -46,7 +30,6 @@
     pageTitle.textContent = item.label;
     document.title = item.label + " · Piano Finanziario";
     document.querySelectorAll(".nav-item").forEach(el => el.classList.toggle("active", el.dataset.hash === key));
-    globalMonth.value = U.isoToMonthInput(Store.state.settings.meseRif);
     viewRoot.innerHTML = "";
     activeRender = global.Views[key];
     if (activeRender) activeRender(viewRoot);
@@ -66,18 +49,74 @@
   });
   scrim.addEventListener("click", () => { sidebar.classList.remove("open"); scrim.classList.remove("show"); });
 
-  globalMonth.addEventListener("change", (e) => {
-    if (!e.target.value) return;
-    Store.state.settings.meseRif = U.monthInputToISO(e.target.value);
-    Store.save();
-    if (activeRender) activeRender(viewRoot);
-  });
-
   window.addEventListener("hashchange", mount);
 
-  global.App = {
-    refreshChrome() { globalMonth.value = U.isoToMonthInput(Store.state.settings.meseRif); }
-  };
+  function openSettingsModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<div class="modal" style="max-width:440px">
+      <h3>Impostazioni</h3>
+      <div class="field">
+        <label>Percentuale da accantonare per le tasse (Partita IVA)</label>
+        <input type="number" id="mAccantonamento" min="0" max="100" step="1" value="${(Store.state.settings.accantonamentoPct * 100).toFixed(0)}">
+        <span class="help">Applicata automaticamente a ogni entrata di tipo "Fattura (Partita IVA)".</span>
+      </div>
+      <hr class="sep">
+      <div class="field">
+        <label>I tuoi dati</label>
+        <span class="help">Restano solo in questo browser. Esporta un backup ogni tanto.</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <button class="btn" id="mExport">${UI.icon("download")} Esporta backup (.json)</button>
+        <button class="btn" id="mImportTrigger">${UI.icon("upload")} Importa backup (.json)</button>
+        <input type="file" id="mFileImport" accept="application/json" style="display:none">
+        <button class="btn btn-danger" id="mReset">${UI.icon("refresh")} Ripristina dati di esempio</button>
+      </div>
+      <div class="modal-actions"><button class="btn btn-primary" data-act="close">Chiudi</button></div>
+    </div>`;
+    document.body.appendChild(overlay);
+    function close() { overlay.remove(); }
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('[data-act="close"]').addEventListener("click", close);
+    overlay.querySelector("#mAccantonamento").addEventListener("change", (e) => {
+      Store.state.settings.accantonamentoPct = U.clamp(parseFloat(e.target.value) || 0, 0, 100) / 100;
+      Store.save();
+      if (activeRender) activeRender(viewRoot);
+    });
+    overlay.querySelector("#mExport").addEventListener("click", () => {
+      U.downloadText("piano-finanziario-backup.json", Store.exportJSON(), "application/json");
+      UI.toast("Backup esportato.");
+    });
+    overlay.querySelector("#mImportTrigger").addEventListener("click", () => overlay.querySelector("#mFileImport").click());
+    overlay.querySelector("#mFileImport").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          Store.importJSON(reader.result);
+          UI.toast("Dati importati correttamente.");
+          close();
+          if (activeRender) activeRender(viewRoot);
+        } catch (err) {
+          UI.toast("File non valido: impossibile importare.", "error");
+        }
+      };
+      reader.readAsText(file);
+    });
+    overlay.querySelector("#mReset").addEventListener("click", async () => {
+      const ok = await UI.confirmDialog({
+        title: "Ripristinare i dati di esempio?",
+        text: "Tutti i dati che hai inserito finora verranno sostituiti con i dati dimostrativi.",
+        confirmLabel: "Ripristina", danger: true
+      });
+      if (ok) { Store.reset(); UI.toast("Dati di esempio ripristinati."); close(); if (activeRender) activeRender(viewRoot); }
+    });
+  }
+
+  document.getElementById("settingsBtn").addEventListener("click", openSettingsModal);
+
+  global.App = { openSettingsModal };
 
   mount();
 })(window);

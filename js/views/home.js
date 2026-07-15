@@ -2,48 +2,70 @@
   "use strict";
   const U = global.Utils;
 
-  const QUICKLINKS = [
-    ["dashboard", "grid", "Dashboard"],
-    ["impostazioni", "sliders", "Impostazioni"],
-    ["entrate", "arrowDown", "Registro Entrate"],
-    ["spese", "arrowUp", "Registro Spese"],
-    ["budget", "pie", "Budget"],
-    ["obiettivi", "target", "Obiettivi Finanziari"],
-    ["fondo-emergenza", "shield", "Fondo Emergenza"],
-    ["patrimonio", "bank", "Patrimonio Netto"],
-    ["abbonamenti", "repeat", "Abbonamenti"],
-    ["calendario", "calendar", "Calendario Pagamenti"],
-    ["permettermi", "calculator", "Quanto Posso Permettermi"],
-    ["analisi", "activity", "Analisi"]
-  ];
-
   function render(root) {
-    const d = Calc.dashboard();
+    const mese = U.todayISO();
+    const entrate = Calc.entrateMese(mese);
+    const uscite = Calc.usciteMese(mese);
+    const risparmiato = entrate - uscite;
+    const hasPIVA = Calc.hasPartitaIVA();
+    const disponibile = Calc.disponibile();
+    const accantonato = Calc.accantonatoResiduo();
+    const obiettivi = Store.state.obiettivi.slice(0, 3);
+    const scadenze = Calc.scadenze().filter(s => s.avviso !== "").slice(0, 3);
+
     root.innerHTML = `
-      <div class="hero">
-        <h1>Bentornata nel tuo piano finanziario ✨</h1>
-        <p>Il tuo centro di controllo personale — semplice, elegante, completamente automatico. Reddito pianificato di questo mese: <b>${U.formatCurrency(d.redditoPianificato)}</b>.</p>
-        <div class="steps">
-          <div class="step-card"><div class="step-num">1</div><h4>Vai su Impostazioni</h4><p>Inserisci il tuo reddito mensile e scegli le percentuali per Necessità, Svaghi e Risparmio.</p></div>
-          <div class="step-card"><div class="step-num">2</div><h4>Registra le transazioni</h4><p>Aggiungi le voci in Registro Entrate e Registro Spese man mano che arrivano.</p></div>
-          <div class="step-card"><div class="step-num">3</div><h4>Controlla la Dashboard</h4><p>Tutto si aggiorna automaticamente: grafici, barre di avanzamento e indicatori colorati.</p></div>
+      <div class="view-head">
+        <h2>Ciao! 👋</h2>
+        <p class="lede">Ecco la tua situazione a colpo d'occhio — ${U.formatMonthLabel(mese)}.</p>
+      </div>
+
+      <div class="section grid grid-2">
+        <button class="quicklink" style="justify-content:center;padding:18px;font-size:14px" data-go="movimenti?add=entrata">${UI.icon("arrowDown")} Registra un'entrata</button>
+        <button class="quicklink" style="justify-content:center;padding:18px;font-size:14px" data-go="movimenti?add=uscita">${UI.icon("arrowUp")} Registra una spesa</button>
+      </div>
+
+      <div class="section-title">Questo mese</div>
+      <div class="section grid grid-3">
+        ${UI.statTile({ label: "Entrate", value: U.formatCurrency(entrate) })}
+        ${UI.statTile({ label: "Uscite", value: U.formatCurrency(uscite) })}
+        ${UI.statTile({ label: "Risparmiato", value: U.formatSignedCurrency(risparmiato), accent: true })}
+      </div>
+
+      <div class="section-title">La tua situazione</div>
+      <div class="section grid ${hasPIVA ? "grid-2" : "grid-2"}">
+        ${hasPIVA ? UI.statTile({ label: "Accantonato per tasse", value: U.formatCurrency(accantonato), sub: "da non spendere" }) : ""}
+        ${UI.statTile({ label: "Disponibile", value: U.formatCurrency(disponibile), accent: true, sub: hasPIVA ? "al netto delle tasse accantonate" : null })}
+      </div>
+
+      <div class="row section">
+        <div class="card" style="flex:1">
+          <div class="card-head"><h3>Entrate e uscite</h3><span class="muted">questo mese</span></div>
+          <div id="homeDonut"></div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="card-head"><h3>Obiettivi di risparmio</h3><a href="#/obiettivi" class="table-toggle">Vedi tutti</a></div>
+          ${obiettivi.length ? obiettivi.map(o => {
+            const c = Calc.obiettivo(o);
+            return `<div style="margin-bottom:14px">
+              <div class="progress-label"><span>${U.escapeHtml(o.nome)}</span><span class="muted">${U.formatPercent(c.pctCompletata)}</span></div>
+              ${UI.progress(c.pctCompletata, { color: c.completato ? "var(--status-good-text)" : "var(--brand)" })}
+            </div>`;
+          }).join("") : `<div class="empty-state"><div class="title">Nessun obiettivo ancora</div><p><a href="#/obiettivi">Creane uno</a></p></div>`}
         </div>
       </div>
 
-      <div class="section">
-        <div class="section-title">Navigazione rapida</div>
-        <div class="quicklinks">
-          ${QUICKLINKS.map(([hash, icon, label]) => `
-            <button class="quicklink" data-go="${hash}">${UI.icon(icon)}<span>${U.escapeHtml(label)}</span></button>
-          `).join("")}
-        </div>
-      </div>
-
-      <div class="card" style="background:var(--accent-cream);border-color:var(--accent-cream-strong)">
-        <strong>Suggerimento</strong>
-        <p class="soft" style="margin-top:6px">I campi con sfondo color crema sono quelli in cui inserisci i tuoi dati. Tutto il resto — dashboard, grafici, barre di avanzamento — si calcola da solo e si aggiorna in automatico ogni volta che registri un movimento o cambi il mese di riferimento in Impostazioni.</p>
+      <div class="card section">
+        <div class="card-head"><h3>Prossime scadenze</h3><a href="#/scadenze" class="table-toggle">Vedi tutte</a></div>
+        ${scadenze.length ? `<div class="table-wrap"><table><tbody>
+          ${scadenze.map(s => `<tr><td>${U.escapeHtml(s.descrizione)}</td><td class="num">${U.formatCurrency(s.importo)}</td><td>${U.formatDateIt(s.data)}</td><td>${UI.pill(s.avviso)}</td></tr>`).join("")}
+        </tbody></table></div>` : `<div class="empty-state"><div class="title">Nessuna scadenza imminente</div></div>`}
       </div>
     `;
+
+    Charts.donut(root.querySelector("#homeDonut"), [
+      { label: "Entrate", value: entrate, color: Charts.COLORS.entrate },
+      { label: "Uscite", value: uscite, color: Charts.COLORS.spese }
+    ], { centerLabel: "questo mese", centerValue: U.formatCurrency(entrate + uscite, true) });
 
     root.querySelectorAll("[data-go]").forEach(btn => {
       btn.addEventListener("click", () => { location.hash = "#/" + btn.dataset.go; });

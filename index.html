@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Piano Finanziario</title>
-<meta name="description" content="Il tuo centro di controllo finanziario personale: budget, entrate e spese, obiettivi, fondo emergenza, patrimonio netto e analisi, tutto in un'unica web app.">
+<meta name="description" content="Il tuo centro di controllo finanziario personale: entrate, uscite, scadenze e obiettivi di risparmio, con accantonamento automatico delle tasse per chi ha la partita IVA.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%AA%99%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,10 +30,9 @@
         <div><h1 id="pageTitle">Home</h1></div>
       </div>
       <div class="topbar-actions">
-        <div class="month-control">
-          <label for="globalMonth">Mese di riferimento</label>
-          <input type="month" id="globalMonth">
-        </div>
+        <button class="btn btn-icon" id="settingsBtn" aria-label="Impostazioni" title="Impostazioni">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.9 7.9 0 0 0 .1-1.5 7.9 7.9 0 0 0-.1-1.5l2.1-1.6-2-3.5-2.5 1a7.9 7.9 0 0 0-2.6-1.5L14 2h-4l-.4 2.6a7.9 7.9 0 0 0-2.6 1.5l-2.5-1-2 3.5 2.1 1.6a7.9 7.9 0 0 0 0 3l-2.1 1.6 2 3.5 2.5-1a7.9 7.9 0 0 0 2.6 1.5L10 22h4l.4-2.6a7.9 7.9 0 0 0 2.6-1.5l2.5 1 2-3.5z"/></svg>
+        </button>
       </div>
     </header>
 
@@ -48,13 +47,9 @@
 <script src="js/charts.js"></script>
 <script src="js/components.js"></script>
 <script src="js/views/home.js"></script>
-<script src="js/views/dashboard.js"></script>
-<script src="js/views/settings.js"></script>
-<script src="js/views/ledgers.js"></script>
-<script src="js/views/budget.js"></script>
-<script src="js/views/goals.js"></script>
-<script src="js/views/networth.js"></script>
-<script src="js/views/analysis.js"></script>
+<script src="js/views/movimenti.js"></script>
+<script src="js/views/scadenze.js"></script>
+<script src="js/views/obiettivi.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
