@@ -13,7 +13,9 @@
     const obiettivi = Store.state.obiettivi.slice(0, 3);
     const scadenze = Calc.scadenze().filter(s => s.avviso !== "").slice(0, 3);
     const primoNome = (Store.state.profilo.nome || "").trim().split(/\s+/)[0];
-    const budgetGruppi = Calc.redditoBaseBudget() > 0 ? Calc.budgetPerGruppo(mese) : null;
+    const profilo = Store.state.profilo;
+    const redditoBase = Calc.redditoBaseBudget();
+    const budgetGruppi = redditoBase > 0 ? Calc.budgetPerGruppo(mese) : null;
 
     root.innerHTML = `
       <div class="view-head">
@@ -42,15 +44,29 @@
       ${budgetGruppi ? `
         <div class="section-title">Il tuo budget del mese</div>
         <div class="card section">
-          ${budgetGruppi.map(g => `
-            <div style="margin-bottom:14px">
-              <div class="progress-label"><span>${U.escapeHtml(g.gruppo)}</span><span class="muted">${U.formatCurrency(g.speso)} / ${U.formatCurrency(g.budget)}</span></div>
-              ${UI.progress(g.pctUsata, { color: g.pctUsata > 0.85 ? "var(--status-critical-text)" : Charts.colorForGruppo(g.gruppo) })}
+          <div class="card-head">
+            <h3>Come dividiamo il tuo reddito</h3>
+            <span class="muted">Il tuo stipendio: <b class="tabular">${U.formatCurrency(profilo.redditoMensile)}</b>${profilo.tipo === "partita_iva" ? ` → al netto delle tasse: <b class="tabular">${U.formatCurrency(redditoBase)}</b>` : ""}</span>
+          </div>
+          <div class="row">
+            <div style="flex:1"><div id="budgetDonut"></div></div>
+            <div style="flex:1.1">
+              ${budgetGruppi.map(g => `
+                <div style="margin-bottom:14px">
+                  <div class="progress-label"><span>${U.escapeHtml(g.gruppo)}</span><span class="muted">speso ${U.formatCurrency(g.speso)} di ${U.formatCurrency(g.budget)}</span></div>
+                  ${UI.progress(g.pctUsata, { color: g.pctUsata > 0.85 ? "var(--status-critical-text)" : Charts.colorForGruppo(g.gruppo) })}
+                </div>
+              `).join("")}
             </div>
-          `).join("")}
-          <p class="help" style="margin-top:2px">Basato sul reddito mensile e sulle percentuali che hai scelto — modificabili dall'icona ⚙️.</p>
+          </div>
+          <p class="help" style="margin-top:2px">Percentuali e reddito modificabili in qualsiasi momento dall'icona ⚙️.</p>
         </div>
-      ` : ""}
+      ` : `
+        <div class="card section" style="background:var(--accent-cream);border-color:var(--accent-cream-strong)">
+          <strong>Vuoi vedere qui il tuo budget diviso automaticamente?</strong>
+          <p class="soft" style="margin-top:6px">Apri l'icona ⚙️ in alto e inserisci il tuo reddito mensile: lo dividiamo subito in Necessità, Svaghi e Risparmio.</p>
+        </div>
+      `}
 
       <div class="row section">
         <div class="card" style="flex:1">
@@ -81,6 +97,12 @@
       { label: "Entrate", value: entrate, color: Charts.COLORS.entrate },
       { label: "Uscite", value: uscite, color: Charts.COLORS.spese }
     ], { centerLabel: "questo mese", centerValue: U.formatCurrency(entrate + uscite, true) });
+
+    if (budgetGruppi) {
+      Charts.donut(root.querySelector("#budgetDonut"), budgetGruppi.map(g => ({
+        label: g.gruppo, value: g.budget, color: Charts.colorForGruppo(g.gruppo)
+      })), { centerLabel: "budget totale", centerValue: U.formatCurrency(redditoBase, true) });
+    }
 
     root.querySelectorAll("[data-go]").forEach(btn => {
       btn.addEventListener("click", () => { location.hash = "#/" + btn.dataset.go; });
