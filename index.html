@@ -772,7 +772,7 @@
     }
     // Keep ALL straight walls (interior partitions matter most); only perimeter
     // DUPLICATES are dropped later via perimDup().
-    const perimTol=Math.max(8,Math.round(0.02*Math.max(sw,sh)));
+    const perimTol=Math.max(6,Math.round(0.009*Math.max(sw,sh))); // only drop runs right ON the perimeter
     function perimDup(orient,pos,a1,a2){
       if(poly.length<3) return false;
       for(let i=0;i<poly.length;i++){
