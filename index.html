@@ -235,6 +235,7 @@
   let mode = "measure";       // measure | pan | calibrate
   let walls = [];             // [{points:[{x,y}]}]
   let current = null;         // current wall
+  let selected = null;        // wall tapped for highlight/read
   let calibPts = [];
 
   const DPR = Math.min(window.devicePixelRatio || 1, 2.5);
@@ -258,6 +259,23 @@
   }
   function toScreen(p){ return { x:p.x*view.scale+view.tx, y:p.y*view.scale+view.ty }; }
   function toImage(sx,sy){ return { x:(sx-view.tx)/view.scale, y:(sy-view.ty)/view.scale }; }
+  function distToSeg(px,py,ax,ay,bx,by){
+    const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
+    let t = L2? ((px-ax)*dx+(py-ay)*dy)/L2 : 0; t=Math.max(0,Math.min(1,t));
+    return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+  }
+  function hitTest(sx,sy){ // nearest wall within ~12px on screen (excludes current)
+    let best=null, bd=12;
+    for(const w of walls){
+      if(w===current) continue;
+      for(let i=1;i<w.points.length;i++){
+        const a=toScreen(w.points[i-1]), b=toScreen(w.points[i]);
+        const d=distToSeg(sx,sy,a.x,a.y,b.x,b.y);
+        if(d<bd){ bd=d; best=w; }
+      }
+    }
+    return best;
+  }
 
   function metersBetween(a,b){
     if(mmPerPixel==null) return null;
@@ -280,41 +298,50 @@
     }
     ctx.setTransform(DPR,0,0,DPR,0,0);
 
-    // walls — pass 1: lines + vertices, collect label candidates
+    // walls — pass 1: thin clean lines, collect label candidates (placed beside the wall)
     const allWalls = current? walls.concat([current]) : walls;
     const cands=[];
     allWalls.forEach(w=>{
       if(!w.points.length) return;
       const pts=w.points.map(toScreen);
-      ctx.lineWidth=2.5; ctx.strokeStyle="rgba(226,52,45,.92)";
+      const sel = w===selected;
+      ctx.lineWidth = sel?3.2:1.8;
+      ctx.strokeStyle = sel? "#e2342d" : "rgba(47,109,246,.85)";
       ctx.lineJoin="round"; ctx.lineCap="round";
       ctx.beginPath();
       pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
       ctx.stroke();
-      pts.forEach(p=>{
-        ctx.beginPath(); ctx.arc(p.x,p.y,4.5,0,7);
-        ctx.fillStyle="#fff"; ctx.fill();
-        ctx.lineWidth=2; ctx.strokeStyle="#e2342d"; ctx.stroke();
-      });
+      // vertices only for the wall being actively drawn (keeps auto walls clean)
+      if(w===current){
+        pts.forEach(p=>{
+          ctx.beginPath(); ctx.arc(p.x,p.y,4,0,7);
+          ctx.fillStyle="#fff"; ctx.fill();
+          ctx.lineWidth=2; ctx.strokeStyle="#2f6df6"; ctx.stroke();
+        });
+      }
       for(let i=1;i<w.points.length;i++){
         const m=metersBetween(w.points[i-1],w.points[i]);
         const a=pts[i-1], b=pts[i];
         const slen=Math.hypot(a.x-b.x,a.y-b.y);
-        cands.push({x:(a.x+b.x)/2,y:(a.y+b.y)/2, text:m==null?"—":m.toFixed(2)+" m", slen});
+        const horiz=Math.abs(a.x-b.x)>=Math.abs(a.y-b.y);
+        cands.push({mx:(a.x+b.x)/2,my:(a.y+b.y)/2, text:m==null?"—":m.toFixed(2), slen, horiz, sel});
       }
     });
-    // pass 2: draw labels, longest segments first, skipping overlaps / too-short-on-screen
-    cands.sort((p,q)=>q.slen-p.slen);
+    // pass 2: labels beside each wall, longest first, skipping overlaps / too-short-on-screen
+    cands.sort((p,q)=> (q.sel-p.sel) || (q.slen-p.slen));
     const placed=[];
     ctx.font="600 11px Inter";
     for(const c of cands){
-      if(c.text==="—") continue;                    // no scale yet → don't clutter with "—"
-      const w=ctx.measureText(c.text).width+10, h=18;
-      if(c.slen < w*0.75) continue;                 // segment too short on screen → skip label
-      const r={x:c.x-w/2,y:c.y-h/2,w,h};
-      if(placed.some(q=>!(r.x>q.x+q.w||r.x+r.w<q.x||r.y>q.y+q.h||r.y+r.h<q.y))) continue;
+      if(c.text==="—" && !c.sel) continue;           // no scale yet → don't clutter
+      const w=ctx.measureText(c.text==="—"?"—":c.text+" m").width+9, h=17;
+      if(c.slen < w*0.7 && !c.sel) continue;         // too short on screen → skip
+      // offset the label to the side of the wall line
+      const x = c.horiz? c.mx : c.mx + w/2 + 6;
+      const y = c.horiz? c.my - 11 : c.my;
+      const r={x:x-w/2,y:y-h/2,w,h};
+      if(!c.sel && placed.some(q=>!(r.x>q.x+q.w||r.x+r.w<q.x||r.y>q.y+q.h||r.y+r.h<q.y))) continue;
       placed.push(r);
-      label(c.x,c.y,c.text);
+      label(x,y, c.text==="—"?"—":c.text+" m", c.sel);
     }
     // calibration pts
     if(mode==="calibrate"){
@@ -330,10 +357,10 @@
       }
     }
   }
-  function label(x,y,text){
+  function label(x,y,text,sel){
     ctx.font="600 11px Inter"; ctx.textAlign="center"; ctx.textBaseline="middle";
     const w=ctx.measureText(text).width+10;
-    ctx.fillStyle="rgba(29,36,48,.92)";
+    ctx.fillStyle= sel? "rgba(226,52,45,.96)" : "rgba(29,36,48,.9)";
     roundRect(x-w/2,y-9,w,18,5); ctx.fill();
     ctx.fillStyle="#fff"; ctx.fillText(text,x,y+1);
   }
@@ -358,6 +385,8 @@
       }
       grand+=tot;
       const card=document.createElement("div"); card.className="wallcard";
+      if(w===selected){ card.style.borderColor="#e2342d"; card.style.background="#fef2f2"; }
+      card.onclick=(ev)=>{ if(ev.target.classList.contains("delw"))return; selected=(selected===w?null:w); draw(); renderResults(); };
       card.innerHTML=`<div class="whead"><span class="wtitle">${w.auto?"🔍 ":""}Parete ${idx+1}</span>
         <span style="display:flex;align-items:center;gap:8px">
           <span class="wtot">${mmPerPixel==null?"—":tot.toFixed(2)+" m"}</span>
@@ -367,6 +396,7 @@
       card.querySelector(".delw").onclick=()=>{
         const wi=walls.indexOf(w); if(wi>=0) walls.splice(wi,1);
         else if(w===current) current=null;
+        if(selected===w) selected=null;
         draw(); renderResults();
       };
       el.appendChild(card);
@@ -459,6 +489,20 @@
     view.ty=(s.clientHeight-imgH*sc)/2;
     draw();
   }
+  function zoomToWalls(){
+    if(!walls.length){ zoomFit(); return; }
+    let mnx=1e9,mny=1e9,mxx=-1e9,mxy=-1e9;
+    for(const w of walls) for(const p of w.points){
+      if(p.x<mnx)mnx=p.x; if(p.x>mxx)mxx=p.x; if(p.y<mny)mny=p.y; if(p.y>mxy)mxy=p.y;
+    }
+    const bw=mxx-mnx, bh=mxy-mny; if(bw<=0||bh<=0){ zoomFit(); return; }
+    const s=$("stage"), pad=50;
+    const sc=Math.min((s.clientWidth-pad)/bw,(s.clientHeight-pad)/bh);
+    view.scale=Math.min(sc,20);
+    view.tx=(s.clientWidth-(mnx+mxx)*view.scale)/2;
+    view.ty=(s.clientHeight-(mny+mxy)*view.scale)/2;
+    draw();
+  }
   function zoomAt(cx,cy,factor){
     const ix=(cx-view.tx)/view.scale, iy=(cy-view.ty)/view.scale;
     view.scale=Math.max(0.05,Math.min(40,view.scale*factor));
@@ -490,7 +534,7 @@
     else if(walls.length){ current=walls.pop(); if(current.points.length) current.points.pop(); }
     draw(); renderResults();
   }
-  function clearMeasures(){ walls=[]; current=null; calibPts=[]; draw(); renderResults(); }
+  function clearMeasures(){ walls=[]; current=null; selected=null; calibPts=[]; draw(); renderResults(); }
 
   // ---------- pointer handling (pan / pinch / tap) ----------
   const pointers=new Map(); let pinch=null, panStart=null, downInfo=null;
@@ -535,7 +579,15 @@
     if(modalOpen()){ pointers.delete(e.pointerId); return; }
     const r=stage.getBoundingClientRect();
     const wasTap = downInfo && !downInfo.moved && (Date.now()-downInfo.t<600) && pointers.size===1;
-    if(wasTap && mode!=="pan"){
+    if(wasTap && mode==="measure"){
+      const sx=e.clientX-r.left, sy=e.clientY-r.top;
+      const hit = (current&&current.points.length)? null : hitTest(sx,sy); // don't hijack taps mid-draw
+      if(hit){ selected = (selected===hit? null : hit); draw(); renderResults(); }
+      else {
+        const img=toImage(sx,sy);
+        if(img.x>=0&&img.y>=0&&img.x<=imgW&&img.y<=imgH){ selected=null; addPoint(img.x,img.y); }
+      }
+    } else if(wasTap && mode==="calibrate"){
       const img=toImage(e.clientX-r.left,e.clientY-r.top);
       if(img.x>=0&&img.y>=0&&img.x<=imgW&&img.y<=imgH) addPoint(img.x,img.y);
     }
@@ -714,9 +766,35 @@
       return out;
     }
     const Hw=dedupe(cluster(Hs)), Vw=dedupe(cluster(Vs));
+    // junction split: cut each wall where a perpendicular wall meets it,
+    // so a measure is the length of the ROOM's wall, not the whole structural run
+    const jt=Math.max(5,Math.round(0.012*Math.max(sw,sh)));
+    function splitH(Hs,Vs){
+      const res=[];
+      for(const [x1,x2,y] of Hs){
+        const cuts=[x1,x2];
+        for(const [vy1,vy2,vx] of Vs)
+          if(vx>x1+jt&&vx<x2-jt && y>=vy1-jt&&y<=vy2+jt) cuts.push(vx);
+        cuts.sort((a,b)=>a-b);
+        for(let k=1;k<cuts.length;k++) if(cuts[k]-cuts[k-1]>=Math.max(10,minLen)) res.push([cuts[k-1],cuts[k],y]);
+      }
+      return res;
+    }
+    function splitV(Vs,Hs){
+      const res=[];
+      for(const [y1,y2,x] of Vs){
+        const cuts=[y1,y2];
+        for(const [hx1,hx2,hy] of Hs)
+          if(hy>y1+jt&&hy<y2-jt && x>=hx1-jt&&x<=hx2+jt) cuts.push(hy);
+        cuts.sort((a,b)=>a-b);
+        for(let k=1;k<cuts.length;k++) if(cuts[k]-cuts[k-1]>=Math.max(10,minLen)) res.push([cuts[k-1],cuts[k],x]);
+      }
+      return res;
+    }
+    const Hsp=splitH(Hw,Vw), Vsp=splitV(Vw,Hw);
     const out=[];
-    for(const [a1,a2,p] of Hw){ if(a2-a1<minLen)continue; out.push({auto:true,points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
-    for(const [a1,a2,p] of Vw){ if(a2-a1<minLen)continue; out.push({auto:true,points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
+    for(const [a1,a2,p] of Hsp){ if(a2-a1<minLen)continue; out.push({auto:true,o:"h",points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
+    for(const [a1,a2,p] of Vsp){ if(a2-a1<minLen)continue; out.push({auto:true,o:"v",points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
     return out;
   }
 
@@ -728,7 +806,9 @@
         const found=detectWalls();
         if(current && current.points.length<2) current=null;
         walls = walls.filter(w=>!w.auto).concat(found); // replace previous auto set, keep manual
-        draw(); renderResults();
+        selected=null;
+        if(found.length) zoomToWalls(); else draw();
+        renderResults();
         if(announce!==false){
           if(!found.length) toast("Nessuna parete rilevata");
           else if(mmPerPixel==null) toast("Rilevate "+found.length+" pareti — ora calibra la scala 🎯 per le misure");
@@ -745,7 +825,7 @@
     $("toolPan").classList.toggle("on",m==="pan");
     $("toolCalib").classList.toggle("on",m==="calibrate");
     const hints={
-      measure:'Tocca i vertici consecutivi di una parete. Ogni tratto mostra la misura. "Nuova parete" inizia una misura separata.',
+      measure:'Tocca un muro per evidenziarlo e leggerne la misura. Tocca lo spazio vuoto per misurare a mano (due punti).',
       pan:"Trascina per spostare la planimetria. Usa due dita per zoom.",
       calibrate:"Tocca due punti a distanza nota (es. due crocini blu), poi inserisci la distanza reale."
     };
