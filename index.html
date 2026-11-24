@@ -770,28 +770,9 @@
       poly=dpSimplify(contour, Math.max(3,0.012*peri));
       if(poly.length>1 && poly[0][0]===poly[poly.length-1][0] && poly[0][1]===poly[poly.length-1][1]) poly.pop();
     }
-    // Keep ALL straight walls (interior partitions matter most); only perimeter
-    // DUPLICATES are dropped later via perimDup().
-    const perimTol=Math.max(6,Math.round(0.009*Math.max(sw,sh))); // only drop runs right ON the perimeter
-    function perimDup(orient,pos,a1,a2){
-      if(poly.length<3) return false;
-      for(let i=0;i<poly.length;i++){
-        const A=poly[i], B=poly[(i+1)%poly.length];
-        const dx=B[0]-A[0], dy=B[1]-A[1];
-        if(orient==="h"){               // horizontal run; match a ~horizontal edge at same y
-          if(Math.abs(dy)>perimTol) continue;
-          const ey=(A[1]+B[1])/2; if(Math.abs(ey-pos)>perimTol) continue;
-          const lo=Math.min(A[0],B[0]), hi=Math.max(A[0],B[0]);
-          if(Math.min(hi,a2)-Math.max(lo,a1) > 0.4*(a2-a1)) return true;
-        } else {                        // vertical run; match a ~vertical edge at same x
-          if(Math.abs(dx)>perimTol) continue;
-          const ex=(A[0]+B[0])/2; if(Math.abs(ex-pos)>perimTol) continue;
-          const lo=Math.min(A[1],B[1]), hi=Math.max(A[1],B[1]);
-          if(Math.min(hi,a2)-Math.max(lo,a1) > 0.4*(a2-a1)) return true;
-        }
-      }
-      return false;
-    }
+    // Keep ALL interior straight walls; the perimeter polygon only ADDS edges
+    // (esp. diagonals) and skips any that a straight wall already covers.
+    const perimTol=Math.max(10,Math.round(0.016*Math.max(sw,sh)));
     const Hs=[],Vs=[];
     for(let y=0;y<sh;y++){
       let x=0, b=y*sw;
@@ -882,15 +863,34 @@
     }
     const Hsp=splitH(Hw,Vw), Vsp=splitV(Vw,Hw);
     const out=[];
-    // perimeter walls (polygon edges — any angle)
+    // interior/straight walls — keep them ALL
+    const straight=[];
+    for(const [a1,a2,p] of Hsp){ if(a2-a1<minLen)continue; straight.push({o:"h",p,a1,a2}); out.push({auto:true,o:"h",points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
+    for(const [a1,a2,p] of Vsp){ if(a2-a1<minLen)continue; straight.push({o:"v",p,a1,a2}); out.push({auto:true,o:"v",points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
+    // perimeter polygon edges — add, but skip ones a straight wall already covers
+    function coveredByStraight(A,B){
+      const dx=B[0]-A[0], dy=B[1]-A[1];
+      const horiz=Math.abs(dy)<=perimTol, vert=Math.abs(dx)<=perimTol;
+      if(!horiz && !vert) return false;          // diagonal edge → always keep
+      const len=Math.hypot(dx,dy);
+      for(const w of straight){
+        if(horiz && w.o==="h" && Math.abs((A[1]+B[1])/2 - w.p)<=perimTol){
+          const lo=Math.min(A[0],B[0]),hi=Math.max(A[0],B[0]);
+          if(Math.min(hi,w.a2)-Math.max(lo,w.a1) > 0.35*len) return true;
+        }
+        if(vert && w.o==="v" && Math.abs((A[0]+B[0])/2 - w.p)<=perimTol){
+          const lo=Math.min(A[1],B[1]),hi=Math.max(A[1],B[1]);
+          if(Math.min(hi,w.a2)-Math.max(lo,w.a1) > 0.35*len) return true;
+        }
+      }
+      return false;
+    }
     for(let i=0;i<poly.length;i++){
       const a=poly[i], b=poly[(i+1)%poly.length];
       if(Math.hypot(b[0]-a[0],b[1]-a[1])<minLen) continue;
+      if(coveredByStraight(a,b)) continue;
       out.push({auto:true,perim:true,points:[{x:a[0]/f,y:a[1]/f},{x:b[0]/f,y:b[1]/f}]});
     }
-    // straight walls (interior + any not already covered by the perimeter polygon)
-    for(const [a1,a2,p] of Hsp){ if(a2-a1<minLen || perimDup("h",p,a1,a2))continue; out.push({auto:true,o:"h",points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
-    for(const [a1,a2,p] of Vsp){ if(a2-a1<minLen || perimDup("v",p,a1,a2))continue; out.push({auto:true,o:"v",points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
     return out;
   }
 
