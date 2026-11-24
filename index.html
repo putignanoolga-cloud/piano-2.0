@@ -133,7 +133,7 @@
 
     <div class="empty" id="empty">
       <h2>Carica una planimetria</h2>
-      <p>Apri il <b>PDF del Catasto</b> (scala letta in automatico) oppure una <b>foto</b> della planimetria. Poi tocca i vertici delle pareti per misurarle.</p>
+      <p>Apri il <b>PDF del Catasto</b> oppure una <b>foto</b>: l'app <b>rileva e misura le pareti da sola</b>. Potrai correggere o aggiungere misure a mano.</p>
       <div class="btnrow" style="justify-content:center">
         <button class="primary" id="openBtn">📄 Apri PDF / immagine</button>
         <button id="camBtn">📷 Scatta foto</button>
@@ -179,6 +179,7 @@
         <button id="toolPan">✋ Sposta</button>
         <button id="toolCalib">🎯 Calibra</button>
       </div>
+      <button id="autoDetect" class="primary" style="width:100%; margin-top:8px; justify-content:center">🔍 Rileva pareti automaticamente</button>
       <div class="btnrow" style="margin-top:8px">
         <button id="newWall">＋ Nuova parete</button>
         <button id="undoPt" class="ghost">↶ Annulla punto</button>
@@ -279,31 +280,41 @@
     }
     ctx.setTransform(DPR,0,0,DPR,0,0);
 
-    // walls
+    // walls — pass 1: lines + vertices, collect label candidates
     const allWalls = current? walls.concat([current]) : walls;
+    const cands=[];
     allWalls.forEach(w=>{
       if(!w.points.length) return;
       const pts=w.points.map(toScreen);
-      // line
       ctx.lineWidth=2.5; ctx.strokeStyle="rgba(226,52,45,.92)";
       ctx.lineJoin="round"; ctx.lineCap="round";
       ctx.beginPath();
       pts.forEach((p,i)=> i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
       ctx.stroke();
-      // vertices
       pts.forEach(p=>{
         ctx.beginPath(); ctx.arc(p.x,p.y,4.5,0,7);
         ctx.fillStyle="#fff"; ctx.fill();
         ctx.lineWidth=2; ctx.strokeStyle="#e2342d"; ctx.stroke();
       });
-      // segment labels
       for(let i=1;i<w.points.length;i++){
         const m=metersBetween(w.points[i-1],w.points[i]);
         const a=pts[i-1], b=pts[i];
-        const mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
-        label(mid.x,mid.y, m==null?"—":m.toFixed(2)+" m");
+        const slen=Math.hypot(a.x-b.x,a.y-b.y);
+        cands.push({x:(a.x+b.x)/2,y:(a.y+b.y)/2, text:m==null?"—":m.toFixed(2)+" m", slen});
       }
     });
+    // pass 2: draw labels, longest segments first, skipping overlaps / too-short-on-screen
+    cands.sort((p,q)=>q.slen-p.slen);
+    const placed=[];
+    ctx.font="600 11px Inter";
+    for(const c of cands){
+      const w=ctx.measureText(c.text).width+10, h=18;
+      if(c.slen < w*0.75) continue;                 // segment too short on screen → skip label
+      const r={x:c.x-w/2,y:c.y-h/2,w,h};
+      if(placed.some(q=>!(r.x>q.x+q.w||r.x+r.w<q.x||r.y>q.y+q.h||r.y+r.h<q.y))) continue;
+      placed.push(r);
+      label(c.x,c.y,c.text);
+    }
     // calibration pts
     if(mode==="calibrate"){
       calibPts.map(toScreen).forEach((p,i)=>{
@@ -319,10 +330,10 @@
     }
   }
   function label(x,y,text){
-    ctx.font="600 12px Inter"; ctx.textAlign="center"; ctx.textBaseline="middle";
-    const w=ctx.measureText(text).width+12;
+    ctx.font="600 11px Inter"; ctx.textAlign="center"; ctx.textBaseline="middle";
+    const w=ctx.measureText(text).width+10;
     ctx.fillStyle="rgba(29,36,48,.92)";
-    roundRect(x-w/2,y-11,w,22,6); ctx.fill();
+    roundRect(x-w/2,y-9,w,18,5); ctx.fill();
     ctx.fillStyle="#fff"; ctx.fillText(text,x,y+1);
   }
   function roundRect(x,y,w,h,r){
@@ -346,9 +357,17 @@
       }
       grand+=tot;
       const card=document.createElement("div"); card.className="wallcard";
-      card.innerHTML=`<div class="whead"><span class="wtitle">Parete ${idx+1}</span>
-        <span class="wtot">${mmPerPixel==null?"—":tot.toFixed(2)+" m"}</span></div>
+      card.innerHTML=`<div class="whead"><span class="wtitle">${w.auto?"🔍 ":""}Parete ${idx+1}</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span class="wtot">${mmPerPixel==null?"—":tot.toFixed(2)+" m"}</span>
+          <button class="delw" title="Elimina" style="padding:2px 7px;border-radius:7px">✕</button>
+        </span></div>
         <div class="seglist">${segs.map(s=>`<span>${s}</span>`).join("")||"<i>tocca un altro punto…</i>"}</div>`;
+      card.querySelector(".delw").onclick=()=>{
+        const wi=walls.indexOf(w); if(wi>=0) walls.splice(wi,1);
+        else if(w===current) current=null;
+        draw(); renderResults();
+      };
       el.appendChild(card);
     });
     $("grandTotal").textContent = mmPerPixel==null? "—" : grand.toFixed(2)+" m";
@@ -377,6 +396,7 @@
       clearMeasures();
       zoomFit();
       updateBadge(); renderResults();
+      runAutoDetect();   // auto-measure walls on load
     }catch(err){
       console.error(err);
       toast("Errore nel caricamento del file");
@@ -415,15 +435,16 @@
     try{
       const tc=await page.getTextContent();
       const txt=tc.items.map(i=>i.str).join(" ");
-      const m=txt.match(/scala\s*1\s*[:\.]\s*(\d{2,4})/i);
-      if(m) detected=parseInt(m[1],10);
+      // tolerate spaced digits, e.g. "Scala 1 : 2 0 0"
+      const m=txt.match(/scala\s*1\s*[:\.\-]?\s*([\d\s]{2,8})/i);
+      if(m){ const n=parseInt(m[1].replace(/\s+/g,""),10); if(n>=10&&n<=5000) detected=n; }
     }catch(e){}
     if(detected){ scaleRatio=detected; $("scaleRatio").value=detected; toast("Scala rilevata: 1:"+detected); }
-    else toast("Scala non rilevata nel testo: verifica il valore 1:"+scaleRatio);
+    else toast("Scala impostata a 1:"+scaleRatio+" (standard Catasto) — verifica in alto");
     recomputePdfScale();
     $("scaleHint").textContent = detected
       ? "Scala letta dal PDF (1:"+detected+"). Correggila qui se serve."
-      : "Non ho trovato la scala nel testo: imposta il valore corretto qui.";
+      : "Uso la scala 1:"+scaleRatio+" (standard del Catasto residenziale, corretta per la maggior parte delle planimetrie). Se la tua riporta una scala diversa — la trovi scritta accanto a \"Scheda n.\" — cambiala qui e tutte le misure si aggiornano.";
   }
 
   // ---------- view ----------
@@ -526,6 +547,167 @@
   },{passive:false});
   function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
 
+  // ---------- AUTOMATIC WALL DETECTION ----------
+  // Pure-JS pipeline (validated): threshold -> erase frame lines ->
+  // largest connected component (the wall network) -> run-length H/V walls
+  // -> cluster + dedupe double lines -> polylines in base-image coords.
+  function detectWalls(){
+    if(!base) return [];
+    const SCMAX=1100;
+    const f=Math.min(1, SCMAX/Math.max(imgW,imgH));
+    const sw=Math.max(1,Math.round(imgW*f)), sh=Math.max(1,Math.round(imgH*f));
+    const oc=document.createElement("canvas"); oc.width=sw; oc.height=sh;
+    const octx=oc.getContext("2d"); octx.drawImage(base,0,0,sw,sh);
+    const data=octx.getImageData(0,0,sw,sh).data;
+    // ink mask (1 = dark pixel)
+    const mask=new Uint8Array(sw*sh);
+    for(let i=0,p=0;i<mask.length;i++,p+=4){
+      const g=(data[p]*0.299+data[p+1]*0.587+data[p+2]*0.114);
+      mask[i]=g<120?1:0;
+    }
+    // erase long frame lines (rows then cols)
+    const rowThr=Math.round(sw*0.45), colThr=Math.round(sh*0.45);
+    for(let y=0;y<sh;y++){
+      let x=0, base0=y*sw;
+      while(x<sw){
+        if(mask[base0+x]){ let s=x; while(x<sw&&mask[base0+x])x++; if(x-s>=rowThr){for(let k=s;k<x;k++)mask[base0+k]=0;} }
+        else x++;
+      }
+    }
+    for(let x=0;x<sw;x++){
+      let y=0;
+      while(y<sh){
+        if(mask[y*sw+x]){ let s=y; while(y<sh&&mask[y*sw+x])y++; if(y-s>=colThr){for(let k=s;k<y;k++)mask[k*sw+x]=0;} }
+        else y++;
+      }
+    }
+    // connected components (4-conn) with per-label bounding box
+    const lab=new Int32Array(sw*sh).fill(0);
+    const areas=[0], bx0=[0], by0=[0], bx1=[0], by1=[0];
+    let nlab=0; const stack=new Int32Array(sw*sh);
+    for(let i=0;i<mask.length;i++){
+      if(mask[i]&&!lab[i]){
+        nlab++; let sp=0; stack[sp++]=i; lab[i]=nlab; let area=0;
+        let mnx=1e9,mny=1e9,mxx=-1,mxy=-1;
+        while(sp>0){
+          const q=stack[--sp]; area++;
+          const qx=q%sw, qy=(q/sw)|0;
+          if(qx<mnx)mnx=qx; if(qx>mxx)mxx=qx; if(qy<mny)mny=qy; if(qy>mxy)mxy=qy;
+          if(qx>0){const n=q-1; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qx<sw-1){const n=q+1; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qy>0){const n=q-sw; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qy<sh-1){const n=q+sw; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+        }
+        areas[nlab]=area; bx0[nlab]=mnx; by0[nlab]=mny; bx1[nlab]=mxx; by1[nlab]=mxy;
+      }
+    }
+    if(nlab===0) return [];
+    // largest component = main wall network; its bbox defines the drawing area
+    let li=1; for(let l=2;l<=nlab;l++) if(areas[l]>areas[li])li=l;
+    const maxA=areas[li];
+    const ew=(bx1[li]-bx0[li])*0.14, eh=(by1[li]-by0[li])*0.14;
+    const px0=bx0[li]-ew, px1=bx1[li]+ew, py0=by0[li]-eh, py1=by1[li]+eh;
+    const keep=new Uint8Array(nlab+1);
+    for(let l=1;l<=nlab;l++){
+      const cx=(bx0[l]+bx1[l])/2, cy=(by0[l]+by1[l])/2;
+      // keep parts inside the drawing area (drops title block, side text, compass)
+      keep[l]= (areas[l]>=Math.max(0.05*maxA,120) && cx>=px0 && cx<=px1 && cy>=py0 && cy<=py1) ?1:0;
+    }
+    const plan=new Uint8Array(sw*sh);
+    for(let i=0;i<plan.length;i++) plan[i]= (lab[i]&&keep[lab[i]])?1:0;
+
+    // min wall length in detection px
+    let minLen;
+    if(mmPerPixel!=null){ minLen=(250/mmPerPixel)*f; } // 25 cm
+    else { minLen=0.02*Math.max(sw,sh); }
+    minLen=Math.max(9,minLen);
+    const Lrun=Math.max(8, Math.round(minLen*0.9));
+
+    // run-length H walls
+    const Hs=[],Vs=[];
+    for(let y=0;y<sh;y++){
+      let x=0, b=y*sw;
+      while(x<sw){
+        if(plan[b+x]){ let s=x; while(x<sw&&plan[b+x])x++; if(x-s>=Lrun)Hs.push([s,x,y]); }
+        else x++;
+      }
+    }
+    for(let x=0;x<sw;x++){
+      let y=0;
+      while(y<sh){
+        if(plan[y*sw+x]){ let s=y; while(y<sh&&plan[y*sw+x])y++; if(y-s>=Lrun)Vs.push([s,y,x]); }
+        else y++;
+      }
+    }
+    const postol=Math.max(4,Math.round(0.012*Math.max(sw,sh)));
+    const gap=Math.max(6,Math.round(0.02*Math.max(sw,sh)));
+    const th=Math.max(6,Math.round(0.015*Math.max(sw,sh)));
+
+    function cluster(segs){
+      segs=segs.slice().sort((a,b)=>a[2]-b[2]);
+      const cl=[];
+      for(const [a1,a2,p] of segs){
+        let done=false;
+        for(const c of cl){
+          if(Math.abs(c.p-p)<=postol && !(a2<c.lo-gap||a1>c.hi+gap)){
+            c.iv.push([a1,a2]); c.ps.push(p);
+            c.p=c.ps.reduce((s,v)=>s+v,0)/c.ps.length;
+            c.lo=Math.min(c.lo,a1); c.hi=Math.max(c.hi,a2); done=true; break;
+          }
+        }
+        if(!done) cl.push({p,ps:[p],iv:[[a1,a2]],lo:a1,hi:a2});
+      }
+      const walls=[];
+      for(const c of cl){
+        const iv=c.iv.slice().sort((a,b)=>a[0]-b[0]);
+        const mg=[iv[0].slice()];
+        for(let k=1;k<iv.length;k++){
+          const [a1,a2]=iv[k];
+          if(a1<=mg[mg.length-1][1]+gap) mg[mg.length-1][1]=Math.max(mg[mg.length-1][1],a2);
+          else mg.push([a1,a2]);
+        }
+        for(const [a1,a2] of mg) walls.push([a1,a2,c.p]);
+      }
+      return walls;
+    }
+    function dedupe(walls){
+      walls=walls.slice().sort((a,b)=>a[2]-b[2]);
+      const used=new Array(walls.length).fill(false); const out=[];
+      for(let i=0;i<walls.length;i++){
+        if(used[i])continue;
+        let [lo,hi,p]=[walls[i][0],walls[i][1],walls[i][2]]; const ps=[p];
+        for(let j=i+1;j<walls.length;j++){
+          if(walls[j][2]-p>th) break;
+          if(!used[j] && !(walls[j][1]<lo-8||walls[j][0]>hi+8)){
+            used[j]=true; lo=Math.min(lo,walls[j][0]); hi=Math.max(hi,walls[j][1]); ps.push(walls[j][2]);
+          }
+        }
+        out.push([lo,hi,ps.reduce((s,v)=>s+v,0)/ps.length]);
+      }
+      return out;
+    }
+    const Hw=dedupe(cluster(Hs)), Vw=dedupe(cluster(Vs));
+    const out=[];
+    for(const [a1,a2,p] of Hw){ if(a2-a1<minLen)continue; out.push({auto:true,points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
+    for(const [a1,a2,p] of Vw){ if(a2-a1<minLen)continue; out.push({auto:true,points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
+    return out;
+  }
+
+  function runAutoDetect(announce){
+    if(!base){ toast("Carica prima una planimetria"); return; }
+    toast("Rilevamento pareti in corso…");
+    setTimeout(()=>{
+      try{
+        const found=detectWalls();
+        if(current && current.points.length<2) current=null;
+        walls = walls.filter(w=>!w.auto).concat(found); // replace previous auto set, keep manual
+        draw(); renderResults();
+        if(announce!==false)
+          toast(found.length? ("Rilevate "+found.length+" pareti — controlla e correggi") : "Nessuna parete rilevata");
+      }catch(err){ console.error(err); toast("Errore nel rilevamento"); }
+    },40);
+  }
+
   // ---------- tool buttons ----------
   function setMode(m){
     mode=m;
@@ -544,6 +726,7 @@
   $("toolMeasure").onclick=()=>setMode("measure");
   $("toolPan").onclick=()=>setMode("pan");
   $("toolCalib").onclick=()=>{ if(!base){toast("Carica prima una planimetria");return;} setMode("calibrate"); };
+  $("autoDetect").onclick=()=>runAutoDetect();
   $("newWall").onclick=newWall;
   $("undoPt").onclick=undoPoint;
   $("clearAll").onclick=()=>{ clearMeasures(); toast("Misure cancellate"); };
