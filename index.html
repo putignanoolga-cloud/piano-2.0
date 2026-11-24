@@ -181,6 +181,10 @@
         <button id="toolPan">✋ Sposta</button>
         <button id="toolCalib">🎯 Calibra</button>
       </div>
+      <div class="btnrow" style="margin-top:8px">
+        <button id="toolCrop">✂️ Seleziona zona</button>
+        <button id="cropReset" class="ghost">↺ Tutta la pagina</button>
+      </div>
       <button id="autoDetect" class="primary" style="width:100%; margin-top:8px; justify-content:center">🔍 Rileva pareti automaticamente</button>
       <div class="btnrow" style="margin-top:8px">
         <button id="newWall">＋ Nuova parete</button>
@@ -239,6 +243,8 @@
   let current = null;         // current wall
   let selected = null;        // wall tapped for highlight/read
   let calibPts = [];
+  let cropRect = null;        // {x0,y0,x1,y1} in base-image coords: restrict detection to this box
+  let cropDrag = null;        // {sx,sy,ex,ey} screen coords while drawing the box
 
   const DPR = Math.min(window.devicePixelRatio || 1, 2.5);
 
@@ -358,6 +364,17 @@
         ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.setLineDash([]);
       }
     }
+    // crop selection box (being drawn, or the saved zone)
+    let box=null;
+    if(cropDrag) box={x:Math.min(cropDrag.sx,cropDrag.ex),y:Math.min(cropDrag.sy,cropDrag.ey),w:Math.abs(cropDrag.ex-cropDrag.sx),h:Math.abs(cropDrag.ey-cropDrag.sy)};
+    else if(cropRect){ const a=toScreen({x:cropRect.x0,y:cropRect.y0}), b=toScreen({x:cropRect.x1,y:cropRect.y1}); box={x:a.x,y:a.y,w:b.x-a.x,h:b.y-a.y}; }
+    if(box){
+      ctx.save();
+      ctx.lineWidth=2; ctx.strokeStyle="#16a34a"; ctx.setLineDash([7,5]);
+      ctx.strokeRect(box.x,box.y,box.w,box.h);
+      ctx.setLineDash([]); ctx.fillStyle="rgba(22,163,74,.08)"; ctx.fillRect(box.x,box.y,box.w,box.h);
+      ctx.restore();
+    }
   }
   function label(x,y,text,sel){
     ctx.font="600 11px Inter"; ctx.textAlign="center"; ctx.textBaseline="middle";
@@ -427,6 +444,7 @@
         await loadImage(file);
       }
       $("empty").style.display="none";
+      cropRect=null; cropDrag=null;   // new plan → analyse the whole page
       clearMeasures();
       zoomFit();
       updateBadge(); renderResults();
@@ -553,7 +571,8 @@
       panStart=null; downInfo=null;
     }else{
       downInfo={x:e.clientX,y:e.clientY,t:Date.now(),moved:false,rx:r.left,ry:r.top};
-      panStart={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty}; // drag always pans
+      if(mode==="crop"){ const sx=e.clientX-r.left, sy=e.clientY-r.top; cropDrag={sx,sy,ex:sx,ey:sy}; panStart=null; }
+      else panStart={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty}; // drag always pans
     }
   });
   stage.addEventListener("pointermove",e=>{
@@ -572,7 +591,9 @@
     if(downInfo){
       if(Math.abs(e.clientX-downInfo.x)+Math.abs(e.clientY-downInfo.y)>6) downInfo.moved=true;
     }
-    // drag to pan in ANY mode (once the finger/mouse has actually moved)
+    // crop mode: drag draws the selection box
+    if(mode==="crop" && cropDrag){ cropDrag.ex=e.clientX-r.left; cropDrag.ey=e.clientY-r.top; draw(); return; }
+    // drag to pan in ANY other mode (once the finger/mouse has actually moved)
     if(panStart && downInfo && downInfo.moved){
       view.tx=panStart.tx+(e.clientX-panStart.x);
       view.ty=panStart.ty+(e.clientY-panStart.y); draw();
@@ -581,6 +602,15 @@
   function endPointer(e){
     if(modalOpen()){ pointers.delete(e.pointerId); return; }
     const r=stage.getBoundingClientRect();
+    if(mode==="crop" && cropDrag){
+      const a=toImage(cropDrag.sx,cropDrag.sy), b=toImage(cropDrag.ex,cropDrag.ey);
+      const x0=Math.max(0,Math.min(a.x,b.x)), y0=Math.max(0,Math.min(a.y,b.y));
+      const x1=Math.min(imgW,Math.max(a.x,b.x)), y1=Math.min(imgH,Math.max(a.y,b.y));
+      cropDrag=null; pointers.delete(e.pointerId); if(pointers.size===0){downInfo=null;panStart=null;}
+      if((x1-x0)>15 && (y1-y0)>15){ cropRect={x0,y0,x1,y1}; setMode("measure"); runAutoDetect(); }
+      else { draw(); }
+      return;
+    }
     const wasTap = downInfo && !downInfo.moved && (Date.now()-downInfo.t<600) && pointers.size===1;
     if(wasTap && mode==="measure"){
       const sx=e.clientX-r.left, sy=e.clientY-r.top;
@@ -677,6 +707,13 @@
       const g=(data[p]*0.299+data[p+1]*0.587+data[p+2]*0.114);
       mask[i]=g<120?1:0;
     }
+    // if the user selected a zone, keep ink only inside it (ignore title/text/other drawings)
+    if(cropRect){
+      const cx0=cropRect.x0*f, cy0=cropRect.y0*f, cx1=cropRect.x1*f, cy1=cropRect.y1*f;
+      for(let y=0;y<sh;y++){ const b=y*sw;
+        for(let x=0;x<sw;x++){ if(x<cx0||x>cx1||y<cy0||y>cy1) mask[b+x]=0; }
+      }
+    }
     // erase long frame lines (rows then cols)
     const rowThr=Math.round(sw*0.45), colThr=Math.round(sh*0.45);
     for(let y=0;y<sh;y++){
@@ -739,7 +776,7 @@
       const cy=(by0[l]+by1[l])/2;
       if(w>0.92*sw && h>0.92*sh) continue;       // skip page-spanning frame
       if(w<0.04*sw && h<0.04*sh) continue;        // skip tiny specks
-      if(cy < 0.24*sh) continue;                  // skip the title block (always top of sheet)
+      if(!cropRect && cy < 0.24*sh) continue;     // skip title block (unless user picked a zone)
       const ext=w*h;
       if(ext>bestExt){ bestExt=ext; li=l; }
     }
@@ -922,10 +959,12 @@
     $("toolMeasure").classList.toggle("on",m==="measure");
     $("toolPan").classList.toggle("on",m==="pan");
     $("toolCalib").classList.toggle("on",m==="calibrate");
+    $("toolCrop").classList.toggle("on",m==="crop");
     const hints={
       measure:'Trascina per spostare, pizzica o rotella per lo zoom. Tocca un muro per leggerne la misura; tocca lo spazio vuoto per misurare a mano.',
       pan:"Trascina per spostare la planimetria. Pizzica o rotella per lo zoom.",
-      calibrate:"Tocca due punti a distanza nota (es. due crocini blu), poi inserisci la distanza reale."
+      calibrate:"Tocca due punti a distanza nota (es. due crocini blu), poi inserisci la distanza reale.",
+      crop:"Disegna un riquadro attorno alla SOLA planimetria (trascina da un angolo all'altro). Rileverò i muri solo lì dentro."
     };
     $("toolHint").textContent=hints[m];
     if(m==="calibrate"){ calibPts=[]; $("calibPts").textContent="Punti selezionati: 0 / 2"; }
@@ -934,6 +973,8 @@
   $("toolMeasure").onclick=()=>setMode("measure");
   $("toolPan").onclick=()=>setMode("pan");
   $("toolCalib").onclick=()=>{ if(!base){toast("Carica prima una planimetria");return;} setMode("calibrate"); };
+  $("toolCrop").onclick=()=>{ if(!base){toast("Carica prima una planimetria");return;} setMode("crop"); };
+  $("cropReset").onclick=()=>{ cropRect=null; runAutoDetect(); toast("Analizzo tutta la pagina"); };
   $("autoDetect").onclick=()=>runAutoDetect();
   $("newWall").onclick=newWall;
   $("undoPt").onclick=undoPoint;
