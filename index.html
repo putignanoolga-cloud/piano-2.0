@@ -605,10 +605,62 @@
   },{passive:false});
   function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
 
+  // ---------- geometry helpers for perimeter polygon ----------
+  function morphDilate(src,sw,sh,R){
+    const tmp=new Uint8Array(sw*sh), out=new Uint8Array(sw*sh);
+    for(let y=0;y<sh;y++){ const b=y*sw; let d=R+1;
+      for(let x=0;x<sw;x++){ d=src[b+x]?0:d+1; if(d<=R)tmp[b+x]=1; }
+      d=R+1; for(let x=sw-1;x>=0;x--){ d=src[b+x]?0:d+1; if(d<=R)tmp[b+x]=1; } }
+    for(let x=0;x<sw;x++){ let d=R+1;
+      for(let y=0;y<sh;y++){ const i=y*sw+x; d=tmp[i]?0:d+1; if(d<=R)out[i]=1; }
+      d=R+1; for(let y=sh-1;y>=0;y--){ const i=y*sw+x; d=tmp[i]?0:d+1; if(d<=R)out[i]=1; } }
+    return out;
+  }
+  function morphClose(src,sw,sh,R){            // seal gaps without net inflation
+    const d=morphDilate(src,sw,sh,R);
+    const inv=new Uint8Array(sw*sh); for(let i=0;i<inv.length;i++) inv[i]=d[i]?0:1;
+    const di=morphDilate(inv,sw,sh,R);
+    const out=new Uint8Array(sw*sh); for(let i=0;i<out.length;i++) out[i]=di[i]?0:1;
+    return out;
+  }
+  function traceContour(m,sw,sh){
+    const idx=(x,y)=>y*sw+x, val=(x,y)=>(x>=0&&y>=0&&x<sw&&y<sh&&m[idx(x,y)])?1:0;
+    let sx=-1,sy=-1;
+    outer: for(let y=0;y<sh;y++) for(let x=0;x<sw;x++) if(m[idx(x,y)]){sx=x;sy=y;break outer;}
+    if(sx<0) return [];
+    const nb=[[-1,0],[-1,-1],[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1]];
+    const c=[]; let px=sx,py=sy,bx=sx-1,by=sy,n=0,mx=sw*sh*8;
+    do{
+      c.push([px,py]);
+      let d=0; for(let i=0;i<8;i++){ if(px+nb[i][0]===bx&&py+nb[i][1]===by){d=i;break;} }
+      let found=false;
+      for(let k=1;k<=8;k++){ const i=(d+k)%8, nx=px+nb[i][0], ny=py+nb[i][1];
+        if(val(nx,ny)){ bx=px+nb[(i-1+8)%8][0]; by=py+nb[(i-1+8)%8][1]; px=nx; py=ny; found=true; break; } }
+      if(!found) break; n++;
+    } while((px!==sx||py!==sy)&&n<mx);
+    return c;
+  }
+  function perpD(p,a,b){ const dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy;
+    if(!L2) return Math.hypot(p[0]-a[0],p[1]-a[1]);
+    const t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2;
+    return Math.hypot(p[0]-(a[0]+t*dx),p[1]-(a[1]+t*dy)); }
+  function dpSimplify(pts,eps){ if(pts.length<3) return pts.slice();
+    let dmax=0,idx=0; const a=pts[0],b=pts[pts.length-1];
+    for(let i=1;i<pts.length-1;i++){ const d=perpD(pts[i],a,b); if(d>dmax){dmax=d;idx=i;} }
+    if(dmax>eps){ const l=dpSimplify(pts.slice(0,idx+1),eps), r=dpSimplify(pts.slice(idx),eps); return l.slice(0,-1).concat(r); }
+    return [a,b]; }
+  function pointInPoly(poly,x,y){ let inside=false;
+    for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+      const xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+      if(((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside; }
+    return inside; }
+  function distToPoly(poly,x,y){ let m=1e9;
+    for(let i=0;i<poly.length;i++){ const a=poly[i],b=poly[(i+1)%poly.length]; m=Math.min(m,perpD([x,y],a,b)); }
+    return m; }
+
   // ---------- AUTOMATIC WALL DETECTION ----------
-  // Pure-JS pipeline (validated): threshold -> erase frame lines ->
-  // largest connected component (the wall network) -> run-length H/V walls
-  // -> cluster + dedupe double lines -> polylines in base-image coords.
+  // threshold -> erase frames -> find drawing region -> PERIMETER polygon (any
+  // angle, incl. diagonals) + interior straight walls -> measure.
   function detectWalls(){
     if(!base) return [];
     const SCMAX=1600;   // higher res so small drawings keep enough detail
@@ -706,19 +758,34 @@
     minLen=Math.max(9,minLen);
     const Lrun=Math.max(8, Math.round(minLen*0.9));
 
-    // run-length H walls
+    // ---- PERIMETER polygon (captures walls at ANY angle, incl. diagonals) ----
+    const comp0=new Uint8Array(sw*sh);
+    for(let i=0;i<comp0.length;i++) comp0[i]=(lab[i]===li && mask[i])?1:0;
+    const kClose=Math.max(5,Math.round(0.02*Math.max(sw,sh)));
+    const sealed=morphClose(comp0,sw,sh,kClose);
+    let poly=[];
+    const contour=traceContour(sealed,sw,sh);
+    if(contour.length>8){
+      let peri=0; for(let i=1;i<contour.length;i++) peri+=Math.hypot(contour[i][0]-contour[i-1][0],contour[i][1]-contour[i-1][1]);
+      poly=dpSimplify(contour, Math.max(3,0.012*peri));
+      if(poly.length>1 && poly[0][0]===poly[poly.length-1][0] && poly[0][1]===poly[poly.length-1][1]) poly.pop();
+    }
+    const margin=Math.max(5,Math.round(0.013*Math.max(sw,sh)));
+    const interiorOK=(mx,my)=> (poly.length<3) ? true : (pointInPoly(poly,mx,my) && distToPoly(poly,mx,my)>margin);
+
+    // run-length straight walls, kept only in the INTERIOR (perimeter handled by polygon)
     const Hs=[],Vs=[];
     for(let y=0;y<sh;y++){
       let x=0, b=y*sw;
       while(x<sw){
-        if(plan[b+x]){ let s=x; while(x<sw&&plan[b+x])x++; if(x-s>=Lrun)Hs.push([s,x,y]); }
+        if(plan[b+x]){ let s=x; while(x<sw&&plan[b+x])x++; if(x-s>=Lrun && interiorOK((s+x)/2,y))Hs.push([s,x,y]); }
         else x++;
       }
     }
     for(let x=0;x<sw;x++){
       let y=0;
       while(y<sh){
-        if(plan[y*sw+x]){ let s=y; while(y<sh&&plan[y*sw+x])y++; if(y-s>=Lrun)Vs.push([s,y,x]); }
+        if(plan[y*sw+x]){ let s=y; while(y<sh&&plan[y*sw+x])y++; if(y-s>=Lrun && interiorOK(x,(s+y)/2))Vs.push([s,y,x]); }
         else y++;
       }
     }
@@ -797,6 +864,13 @@
     }
     const Hsp=splitH(Hw,Vw), Vsp=splitV(Vw,Hw);
     const out=[];
+    // perimeter walls (polygon edges — any angle)
+    for(let i=0;i<poly.length;i++){
+      const a=poly[i], b=poly[(i+1)%poly.length];
+      if(Math.hypot(b[0]-a[0],b[1]-a[1])<minLen) continue;
+      out.push({auto:true,perim:true,points:[{x:a[0]/f,y:a[1]/f},{x:b[0]/f,y:b[1]/f}]});
+    }
+    // interior straight walls
     for(const [a1,a2,p] of Hsp){ if(a2-a1<minLen)continue; out.push({auto:true,o:"h",points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
     for(const [a1,a2,p] of Vsp){ if(a2-a1<minLen)continue; out.push({auto:true,o:"v",points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
     return out;
