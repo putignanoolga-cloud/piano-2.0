@@ -770,22 +770,40 @@
       poly=dpSimplify(contour, Math.max(3,0.012*peri));
       if(poly.length>1 && poly[0][0]===poly[poly.length-1][0] && poly[0][1]===poly[poly.length-1][1]) poly.pop();
     }
-    const margin=Math.max(5,Math.round(0.013*Math.max(sw,sh)));
-    const interiorOK=(mx,my)=> (poly.length<3) ? true : (pointInPoly(poly,mx,my) && distToPoly(poly,mx,my)>margin);
-
-    // run-length straight walls, kept only in the INTERIOR (perimeter handled by polygon)
+    // Keep ALL straight walls (interior partitions matter most); only perimeter
+    // DUPLICATES are dropped later via perimDup().
+    const perimTol=Math.max(8,Math.round(0.02*Math.max(sw,sh)));
+    function perimDup(orient,pos,a1,a2){
+      if(poly.length<3) return false;
+      for(let i=0;i<poly.length;i++){
+        const A=poly[i], B=poly[(i+1)%poly.length];
+        const dx=B[0]-A[0], dy=B[1]-A[1];
+        if(orient==="h"){               // horizontal run; match a ~horizontal edge at same y
+          if(Math.abs(dy)>perimTol) continue;
+          const ey=(A[1]+B[1])/2; if(Math.abs(ey-pos)>perimTol) continue;
+          const lo=Math.min(A[0],B[0]), hi=Math.max(A[0],B[0]);
+          if(Math.min(hi,a2)-Math.max(lo,a1) > 0.4*(a2-a1)) return true;
+        } else {                        // vertical run; match a ~vertical edge at same x
+          if(Math.abs(dx)>perimTol) continue;
+          const ex=(A[0]+B[0])/2; if(Math.abs(ex-pos)>perimTol) continue;
+          const lo=Math.min(A[1],B[1]), hi=Math.max(A[1],B[1]);
+          if(Math.min(hi,a2)-Math.max(lo,a1) > 0.4*(a2-a1)) return true;
+        }
+      }
+      return false;
+    }
     const Hs=[],Vs=[];
     for(let y=0;y<sh;y++){
       let x=0, b=y*sw;
       while(x<sw){
-        if(plan[b+x]){ let s=x; while(x<sw&&plan[b+x])x++; if(x-s>=Lrun && interiorOK((s+x)/2,y))Hs.push([s,x,y]); }
+        if(plan[b+x]){ let s=x; while(x<sw&&plan[b+x])x++; if(x-s>=Lrun)Hs.push([s,x,y]); }
         else x++;
       }
     }
     for(let x=0;x<sw;x++){
       let y=0;
       while(y<sh){
-        if(plan[y*sw+x]){ let s=y; while(y<sh&&plan[y*sw+x])y++; if(y-s>=Lrun && interiorOK(x,(s+y)/2))Vs.push([s,y,x]); }
+        if(plan[y*sw+x]){ let s=y; while(y<sh&&plan[y*sw+x])y++; if(y-s>=Lrun)Vs.push([s,y,x]); }
         else y++;
       }
     }
@@ -870,9 +888,9 @@
       if(Math.hypot(b[0]-a[0],b[1]-a[1])<minLen) continue;
       out.push({auto:true,perim:true,points:[{x:a[0]/f,y:a[1]/f},{x:b[0]/f,y:b[1]/f}]});
     }
-    // interior straight walls
-    for(const [a1,a2,p] of Hsp){ if(a2-a1<minLen)continue; out.push({auto:true,o:"h",points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
-    for(const [a1,a2,p] of Vsp){ if(a2-a1<minLen)continue; out.push({auto:true,o:"v",points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
+    // straight walls (interior + any not already covered by the perimeter polygon)
+    for(const [a1,a2,p] of Hsp){ if(a2-a1<minLen || perimDup("h",p,a1,a2))continue; out.push({auto:true,o:"h",points:[{x:a1/f,y:p/f},{x:a2/f,y:p/f}]}); }
+    for(const [a1,a2,p] of Vsp){ if(a2-a1<minLen || perimDup("v",p,a1,a2))continue; out.push({auto:true,o:"v",points:[{x:p/f,y:a1/f},{x:p/f,y:a2/f}]}); }
     return out;
   }
 
