@@ -496,9 +496,9 @@
       if(p.x<mnx)mnx=p.x; if(p.x>mxx)mxx=p.x; if(p.y<mny)mny=p.y; if(p.y>mxy)mxy=p.y;
     }
     const bw=mxx-mnx, bh=mxy-mny; if(bw<=0||bh<=0){ zoomFit(); return; }
-    const s=$("stage"), pad=50;
+    const s=$("stage"), pad=60;
     const sc=Math.min((s.clientWidth-pad)/bw,(s.clientHeight-pad)/bh);
-    view.scale=Math.min(sc,20);
+    view.scale=Math.max(0.1, Math.min(sc,4)); // cap so it never zooms in too far
     view.tx=(s.clientWidth-(mnx+mxx)*view.scale)/2;
     view.ty=(s.clientHeight-(mny+mxy)*view.scale)/2;
     draw();
@@ -551,7 +551,7 @@
       panStart=null; downInfo=null;
     }else{
       downInfo={x:e.clientX,y:e.clientY,t:Date.now(),moved:false,rx:r.left,ry:r.top};
-      if(mode==="pan") panStart={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty};
+      panStart={x:e.clientX,y:e.clientY,tx:view.tx,ty:view.ty}; // drag always pans
     }
   });
   stage.addEventListener("pointermove",e=>{
@@ -570,7 +570,8 @@
     if(downInfo){
       if(Math.abs(e.clientX-downInfo.x)+Math.abs(e.clientY-downInfo.y)>6) downInfo.moved=true;
     }
-    if(mode==="pan" && panStart){
+    // drag to pan in ANY mode (once the finger/mouse has actually moved)
+    if(panStart && downInfo && downInfo.moved){
       view.tx=panStart.tx+(e.clientX-panStart.x);
       view.ty=panStart.ty+(e.clientY-panStart.y); draw();
     }
@@ -825,8 +826,8 @@
     $("toolPan").classList.toggle("on",m==="pan");
     $("toolCalib").classList.toggle("on",m==="calibrate");
     const hints={
-      measure:'Tocca un muro per evidenziarlo e leggerne la misura. Tocca lo spazio vuoto per misurare a mano (due punti).',
-      pan:"Trascina per spostare la planimetria. Usa due dita per zoom.",
+      measure:'Trascina per spostare, pizzica o rotella per lo zoom. Tocca un muro per leggerne la misura; tocca lo spazio vuoto per misurare a mano.',
+      pan:"Trascina per spostare la planimetria. Pizzica o rotella per lo zoom.",
       calibrate:"Tocca due punti a distanza nota (es. due crocini blu), poi inserisci la distanza reale."
     };
     $("toolHint").textContent=hints[m];
