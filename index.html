@@ -133,7 +133,7 @@
 
     <div class="empty" id="empty">
       <h2>Carica una planimetria</h2>
-      <p>Apri il <b>PDF del Catasto</b> oppure una <b>foto</b>: l'app <b>rileva e misura le pareti da sola</b>. Potrai correggere o aggiungere misure a mano.</p>
+      <p><b>PDF del Catasto</b> → rileva e <b>misura le pareti da sola</b> (consigliato).<br><b>Foto</b> → rileva le pareti, poi basta <b>calibrare la scala una volta</b>.</p>
       <div class="btnrow" style="justify-content:center">
         <button class="primary" id="openBtn">📄 Apri PDF / immagine</button>
         <button id="camBtn">📷 Scatta foto</button>
@@ -308,6 +308,7 @@
     const placed=[];
     ctx.font="600 11px Inter";
     for(const c of cands){
+      if(c.text==="—") continue;                    // no scale yet → don't clutter with "—"
       const w=ctx.measureText(c.text).width+10, h=18;
       if(c.slen < w*0.75) continue;                 // segment too short on screen → skip label
       const r={x:c.x-w/2,y:c.y-h/2,w,h};
@@ -362,7 +363,7 @@
           <span class="wtot">${mmPerPixel==null?"—":tot.toFixed(2)+" m"}</span>
           <button class="delw" title="Elimina" style="padding:2px 7px;border-radius:7px">✕</button>
         </span></div>
-        <div class="seglist">${segs.map(s=>`<span>${s}</span>`).join("")||"<i>tocca un altro punto…</i>"}</div>`;
+        <div class="seglist">${segs.map(s=>`<span>${s}</span>`).join("")|| (mmPerPixel==null?"<i>🎯 calibra la scala per le misure</i>":"<i>tocca un altro punto…</i>")}</div>`;
       card.querySelector(".delw").onclick=()=>{
         const wi=walls.indexOf(w); if(wi>=0) walls.splice(wi,1);
         else if(w===current) current=null;
@@ -379,8 +380,9 @@
     if(!base){ b.className="scalebadge"; b.innerHTML="<span>Nessun file</span>"; return; }
     if(mmPerPixel==null){ b.className="scalebadge"; b.innerHTML="<span>⚠ Scala da calibrare</span>"; return; }
     b.className="scalebadge active";
-    const cmPerPx=(mmPerPixel/10).toFixed(2);
-    b.innerHTML=`<span>Scala <b>1:${scaleRatio}</b> · misure attive</span>`;
+    b.innerHTML = sourceType==="pdf"
+      ? `<span>Scala <b>1:${scaleRatio}</b> · misure attive</span>`
+      : `<span>Scala <b>calibrata</b> · misure attive</span>`;
   }
 
   // ---------- file loading ----------
@@ -493,7 +495,9 @@
   // ---------- pointer handling (pan / pinch / tap) ----------
   const pointers=new Map(); let pinch=null, panStart=null, downInfo=null;
   const stage=$("stage");
+  const modalOpen=()=>$("calibModal").classList.contains("show");
   stage.addEventListener("pointerdown",e=>{
+    if(modalOpen()) return; // don't let clicks on the calibration dialog reach the canvas
     stage.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
     const r=stage.getBoundingClientRect();
@@ -528,6 +532,7 @@
     }
   });
   function endPointer(e){
+    if(modalOpen()){ pointers.delete(e.pointerId); return; }
     const r=stage.getBoundingClientRect();
     const wasTap = downInfo && !downInfo.moved && (Date.now()-downInfo.t<600) && pointers.size===1;
     if(wasTap && mode!=="pan"){
@@ -581,40 +586,62 @@
         else y++;
       }
     }
-    // connected components (4-conn) with per-label bounding box
+    // dilate ink so fragmented (low-res) walls merge into one blob — robust region finding
+    const R=Math.max(2, Math.round(0.004*Math.max(sw,sh)));
+    const dil=new Uint8Array(sw*sh);
+    {
+      const tmp=new Uint8Array(sw*sh);
+      for(let y=0;y<sh;y++){ const b=y*sw; let d=R+1;
+        for(let x=0;x<sw;x++){ d=mask[b+x]?0:d+1; if(d<=R)tmp[b+x]=1; }
+        d=R+1;
+        for(let x=sw-1;x>=0;x--){ d=mask[b+x]?0:d+1; if(d<=R)tmp[b+x]=1; }
+      }
+      for(let x=0;x<sw;x++){ let d=R+1;
+        for(let y=0;y<sh;y++){ const i=y*sw+x; d=tmp[i]?0:d+1; if(d<=R)dil[i]=1; }
+        d=R+1;
+        for(let y=sh-1;y>=0;y--){ const i=y*sw+x; d=tmp[i]?0:d+1; if(d<=R)dil[i]=1; }
+      }
+    }
+    // connected components on the dilated mask; track bbox
     const lab=new Int32Array(sw*sh).fill(0);
     const areas=[0], bx0=[0], by0=[0], bx1=[0], by1=[0];
     let nlab=0; const stack=new Int32Array(sw*sh);
-    for(let i=0;i<mask.length;i++){
-      if(mask[i]&&!lab[i]){
+    for(let i=0;i<dil.length;i++){
+      if(dil[i]&&!lab[i]){
         nlab++; let sp=0; stack[sp++]=i; lab[i]=nlab; let area=0;
         let mnx=1e9,mny=1e9,mxx=-1,mxy=-1;
         while(sp>0){
           const q=stack[--sp]; area++;
           const qx=q%sw, qy=(q/sw)|0;
           if(qx<mnx)mnx=qx; if(qx>mxx)mxx=qx; if(qy<mny)mny=qy; if(qy>mxy)mxy=qy;
-          if(qx>0){const n=q-1; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
-          if(qx<sw-1){const n=q+1; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
-          if(qy>0){const n=q-sw; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
-          if(qy<sh-1){const n=q+sw; if(mask[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qx>0){const n=q-1; if(dil[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qx<sw-1){const n=q+1; if(dil[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qy>0){const n=q-sw; if(dil[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
+          if(qy<sh-1){const n=q+sw; if(dil[n]&&!lab[n]){lab[n]=nlab;stack[sp++]=n;}}
         }
         areas[nlab]=area; bx0[nlab]=mnx; by0[nlab]=mny; bx1[nlab]=mxx; by1[nlab]=mxy;
       }
     }
     if(nlab===0) return [];
-    // largest component = main wall network; its bbox defines the drawing area
-    let li=1; for(let l=2;l<=nlab;l++) if(areas[l]>areas[li])li=l;
-    const maxA=areas[li];
-    const ew=(bx1[li]-bx0[li])*0.14, eh=(by1[li]-by0[li])*0.14;
-    const px0=bx0[li]-ew, px1=bx1[li]+ew, py0=by0[li]-eh, py1=by1[li]+eh;
-    const keep=new Uint8Array(nlab+1);
+    // plan region = component with the largest spatial EXTENT (bbox area),
+    // excluding the full-page frame. The floor plan is the biggest drawing.
+    let li=-1, bestExt=0;
     for(let l=1;l<=nlab;l++){
-      const cx=(bx0[l]+bx1[l])/2, cy=(by0[l]+by1[l])/2;
-      // keep parts inside the drawing area (drops title block, side text, compass)
-      keep[l]= (areas[l]>=Math.max(0.05*maxA,120) && cx>=px0 && cx<=px1 && cy>=py0 && cy<=py1) ?1:0;
+      const w=bx1[l]-bx0[l]+1, h=by1[l]-by0[l]+1;
+      if(w>0.92*sw && h>0.92*sh) continue;       // skip page-spanning frame
+      if(w<0.04*sw && h<0.04*sh) continue;        // skip tiny specks
+      const ext=w*h;
+      if(ext>bestExt){ bestExt=ext; li=l; }
     }
+    if(li<0) return [];
+    const ew=(bx1[li]-bx0[li])*0.08, eh=(by1[li]-by0[li])*0.08;
+    const px0=bx0[li]-ew, px1=bx1[li]+ew, py0=by0[li]-eh, py1=by1[li]+eh;
+    // plan mask = original ink inside the plan region (keeps every wall, drops cartiglio/text/compass)
     const plan=new Uint8Array(sw*sh);
-    for(let i=0;i<plan.length;i++) plan[i]= (lab[i]&&keep[lab[i]])?1:0;
+    for(let y=0;y<sh;y++){
+      if(y<py0||y>py1) continue; const b=y*sw;
+      for(let x=Math.max(0,px0|0);x<=Math.min(sw-1,px1|0);x++) plan[b+x]=mask[b+x];
+    }
 
     // min wall length in detection px
     let minLen;
@@ -702,8 +729,11 @@
         if(current && current.points.length<2) current=null;
         walls = walls.filter(w=>!w.auto).concat(found); // replace previous auto set, keep manual
         draw(); renderResults();
-        if(announce!==false)
-          toast(found.length? ("Rilevate "+found.length+" pareti — controlla e correggi") : "Nessuna parete rilevata");
+        if(announce!==false){
+          if(!found.length) toast("Nessuna parete rilevata");
+          else if(mmPerPixel==null) toast("Rilevate "+found.length+" pareti — ora calibra la scala 🎯 per le misure");
+          else toast("Rilevate "+found.length+" pareti — controlla e correggi");
+        }
       }catch(err){ console.error(err); toast("Errore nel rilevamento"); }
     },40);
   }
