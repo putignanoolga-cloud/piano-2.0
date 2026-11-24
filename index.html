@@ -174,24 +174,31 @@
   <aside>
     <div class="panel-sec">
       <h3>Planimetria</h3>
-      <button id="loadNew" style="width:100%; justify-content:center; margin-bottom:12px">🔄 Nuova planimetria</button>
-      <h3>Strumenti</h3>
-      <div class="btnrow">
-        <button id="toolMeasure" class="on">📐 Misura</button>
-        <button id="toolPan">✋ Sposta</button>
-        <button id="toolCalib">🎯 Calibra</button>
-      </div>
+      <button id="loadNew" style="width:100%; justify-content:center">🔄 Nuova planimetria</button>
+    </div>
+
+    <div class="panel-sec">
+      <h3>Rileva pareti</h3>
+      <button id="autoDetect" class="primary" style="width:100%; justify-content:center">🔍 Automaticamente</button>
       <div class="btnrow" style="margin-top:8px">
-        <button id="toolCrop">✂️ Seleziona zona</button>
+        <button id="toolCrop">✂️ Solo una zona</button>
         <button id="cropReset" class="ghost">↺ Tutta la pagina</button>
       </div>
-      <button id="autoDetect" class="primary" style="width:100%; margin-top:8px; justify-content:center">🔍 Rileva pareti automaticamente</button>
-      <div class="btnrow" style="margin-top:8px">
-        <button id="newWall">＋ Nuova parete</button>
+      <div class="hint" id="toolHint">Carica una planimetria: i muri vengono rilevati da soli. Trascina per spostare, pizzica/rotella per lo zoom.</div>
+      <div id="calibBox" style="display:none; margin-top:10px">
+        <button id="calibBtn" style="width:100%; justify-content:center; background:#fff4e6; border-color:#f0c98a; color:#92560a">🎯 Imposta la scala (foto)</button>
+        <div class="hint">Questa è una foto: tocca due punti a distanza nota per dare la scala e vedere le misure.</div>
+      </div>
+    </div>
+
+    <div class="panel-sec">
+      <h3>A mano</h3>
+      <div class="btnrow">
+        <button id="newWall">✍️ Misura a mano</button>
         <button id="undoPt" class="ghost">↶ Annulla punto</button>
         <button id="clearAll" class="ghost">🗑 Pulisci</button>
       </div>
-      <div class="hint" id="toolHint">Tocca i vertici consecutivi di una parete. Ogni tratto mostra la misura. "Nuova parete" inizia una misura separata.</div>
+      <div class="hint">Tocca un muro per leggerne la misura. Con "Misura a mano" tocchi tu i due angoli di una parete.</div>
     </div>
 
     <div class="panel-sec">
@@ -426,6 +433,8 @@
   // ---------- scale badge ----------
   function updateBadge(){
     const b=$("scaleBadge");
+    // show the "set scale" button only when a plan is loaded but has no scale (photos)
+    $("calibBox").style.display = (base && mmPerPixel==null) ? "block" : "none";
     if(!base){ b.className="scalebadge"; b.innerHTML="<span>Nessun file</span>"; return; }
     if(mmPerPixel==null){ b.className="scalebadge"; b.innerHTML="<span>⚠ Scala da calibrare</span>"; return; }
     b.className="scalebadge active";
@@ -956,9 +965,6 @@
   // ---------- tool buttons ----------
   function setMode(m){
     mode=m;
-    $("toolMeasure").classList.toggle("on",m==="measure");
-    $("toolPan").classList.toggle("on",m==="pan");
-    $("toolCalib").classList.toggle("on",m==="calibrate");
     $("toolCrop").classList.toggle("on",m==="crop");
     const hints={
       measure:'Trascina per spostare, pizzica o rotella per lo zoom. Tocca un muro per leggerne la misura; tocca lo spazio vuoto per misurare a mano.',
@@ -966,17 +972,15 @@
       calibrate:"Tocca due punti a distanza nota (es. due crocini blu), poi inserisci la distanza reale.",
       crop:"Disegna un riquadro attorno alla SOLA planimetria (trascina da un angolo all'altro). Rileverò i muri solo lì dentro."
     };
-    $("toolHint").textContent=hints[m];
+    $("toolHint").textContent=hints[m]||hints.measure;
     if(m==="calibrate"){ calibPts=[]; $("calibPts").textContent="Punti selezionati: 0 / 2"; }
     draw();
   }
-  $("toolMeasure").onclick=()=>setMode("measure");
-  $("toolPan").onclick=()=>setMode("pan");
-  $("toolCalib").onclick=()=>{ if(!base){toast("Carica prima una planimetria");return;} setMode("calibrate"); };
+  $("calibBtn").onclick=()=>{ if(!base){toast("Carica prima una planimetria");return;} setMode("calibrate"); };
   $("toolCrop").onclick=()=>{ if(!base){toast("Carica prima una planimetria");return;} setMode("crop"); };
   $("cropReset").onclick=()=>{ cropRect=null; runAutoDetect(); toast("Analizzo tutta la pagina"); };
   $("autoDetect").onclick=()=>runAutoDetect();
-  $("newWall").onclick=newWall;
+  $("newWall").onclick=()=>{ setMode("measure"); newWall(); toast("Tocca i due angoli della parete"); };
   $("undoPt").onclick=undoPoint;
   $("clearAll").onclick=()=>{ clearMeasures(); toast("Misure cancellate"); };
 
