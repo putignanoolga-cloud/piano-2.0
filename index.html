@@ -611,7 +611,7 @@
   // -> cluster + dedupe double lines -> polylines in base-image coords.
   function detectWalls(){
     if(!base) return [];
-    const SCMAX=1100;
+    const SCMAX=1600;   // higher res so small drawings keep enough detail
     const f=Math.min(1, SCMAX/Math.max(imgW,imgH));
     const sw=Math.max(1,Math.round(imgW*f)), sh=Math.max(1,Math.round(imgH*f));
     const oc=document.createElement("canvas"); oc.width=sw; oc.height=sh;
@@ -639,8 +639,9 @@
         else y++;
       }
     }
-    // dilate ink so fragmented (low-res) walls merge into one blob — robust region finding
-    const R=Math.max(2, Math.round(0.004*Math.max(sw,sh)));
+    // dilate ink so fragmented walls merge into one blob — robust region finding
+    // (used only to locate the drawing; wall detection runs on the un-dilated mask)
+    const R=Math.max(3, Math.round(0.009*Math.max(sw,sh)));
     const dil=new Uint8Array(sw*sh);
     {
       const tmp=new Uint8Array(sw*sh);
@@ -681,8 +682,10 @@
     let li=-1, bestExt=0;
     for(let l=1;l<=nlab;l++){
       const w=bx1[l]-bx0[l]+1, h=by1[l]-by0[l]+1;
+      const cy=(by0[l]+by1[l])/2;
       if(w>0.92*sw && h>0.92*sh) continue;       // skip page-spanning frame
       if(w<0.04*sw && h<0.04*sh) continue;        // skip tiny specks
+      if(cy < 0.24*sh) continue;                  // skip the title block (always top of sheet)
       const ext=w*h;
       if(ext>bestExt){ bestExt=ext; li=l; }
     }
