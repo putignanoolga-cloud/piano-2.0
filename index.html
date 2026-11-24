@@ -173,6 +173,8 @@
 
   <aside>
     <div class="panel-sec">
+      <h3>Planimetria</h3>
+      <button id="loadNew" style="width:100%; justify-content:center; margin-bottom:12px">🔄 Nuova planimetria</button>
       <h3>Strumenti</h3>
       <div class="btnrow">
         <button id="toolMeasure" class="on">📐 Misura</button>
@@ -962,6 +964,7 @@
 
   // file inputs
   $("openBtn").onclick=()=>$("fileInput").click();
+  $("loadNew").onclick=()=>$("fileInput").click();
   $("camBtn").onclick=()=>$("camInput").click();
   $("fileInput").onchange=e=>{ loadFile(e.target.files[0]); e.target.value=""; };
   $("camInput").onchange=e=>{ loadFile(e.target.files[0]); e.target.value=""; };
