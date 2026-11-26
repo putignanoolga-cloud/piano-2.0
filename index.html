@@ -210,12 +210,27 @@
 
     <div class="panel-sec">
       <h3>Scala</h3>
+      <div id="fsWarn" style="display:none; background:#fff4e6; border:1px solid #f0c98a; color:#7a4a08; border-radius:10px; padding:9px 11px; font-size:12.5px; line-height:1.45; margin-bottom:10px">
+        ⚠ <b>Planimetria "fuori standard"</b>: il disegno originale è stato rimpicciolito per stare in un A4, quindi le misure automatiche risultano <b>più piccole del reale</b>. Correggi la scala qui sotto.
+      </div>
       <div class="seg-ctl">
         <span>1 :</span>
         <input type="number" id="scaleRatio" value="200" step="1" min="1" style="max-width:110px">
         <button id="applyRatio" title="Applica">OK</button>
       </div>
       <div class="hint" id="scaleHint">Per i PDF del Catasto la scala viene rilevata automaticamente. Puoi correggerla qui.</div>
+
+      <div style="margin-top:12px; padding-top:12px; border-top:1px dashed var(--line)">
+        <label class="fld"><b>Le misure non tornano?</b> Correggi con un dato che conosci:</label>
+        <button id="fixLen" style="width:100%; justify-content:center; margin-top:4px">📏 Con una lunghezza nota (2 punti)</button>
+        <label class="fld" style="margin-top:10px">Oppure con la superficie reale della zona selezionata (es. dall'APE):</label>
+        <div class="seg-ctl">
+          <input type="number" id="realArea" step="0.01" min="0" placeholder="es. 30">
+          <span>m²</span>
+          <button id="applyArea">Applica</button>
+        </div>
+        <div class="hint">Traccia <b>esattamente</b> la zona a cui si riferisce quel valore (es. tutti i locali riscaldati), toccala per selezionarla, poi inserisci i m² reali: tutte le misure si correggono.</div>
+      </div>
     </div>
 
     <div class="panel-sec" style="padding-bottom:6px">
@@ -260,6 +275,8 @@
   let current = null;         // current wall
   let selected = null;        // wall tapped for highlight/read
   let calibPts = [];
+  let fuoriStandard = false;  // PDF says "fuori standard" → auto scale unreliable
+  let scaleCorrected = false; // user corrected the scale by a known length/area
   let cropRect = null;        // {x0,y0,x1,y1} in base-image coords: restrict detection to this box
   let cropDrag = null;        // {sx,sy,ex,ey} screen coords while drawing the box
 
@@ -484,6 +501,8 @@
     $("calibBox").style.display = (base && mmPerPixel==null) ? "block" : "none";
     if(!base){ b.className="scalebadge"; b.innerHTML="<span>Nessun file</span>"; return; }
     if(mmPerPixel==null){ b.className="scalebadge"; b.innerHTML="<span>⚠ Scala da calibrare</span>"; return; }
+    if(scaleCorrected){ b.className="scalebadge active"; b.innerHTML=`<span>Scala <b>corretta</b> ✓ · misure attive</span>`; return; }
+    if(fuoriStandard){ b.className="scalebadge"; b.innerHTML=`<span>⚠ Scala da verificare (fuori standard)</span>`; return; }
     b.className="scalebadge active";
     b.innerHTML = sourceType==="pdf"
       ? `<span>Scala <b>1:${scaleRatio}</b> · misure attive</span>`
@@ -494,6 +513,7 @@
   async function loadFile(file){
     if(!file) return;
     try{
+      fuoriStandard=false; scaleCorrected=false;
       if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){
         await loadPdf(file);
       } else {
@@ -503,10 +523,12 @@
       cropRect=null; cropDrag=null;
       clearMeasures();
       zoomFit();
+      $("fsWarn").style.display = fuoriStandard ? "block" : "none";
       updateBadge(); renderResults();
       setMode("measure");
-      toast(mmPerPixel==null ? "Foto caricata — imposta la scala, poi tocca i punti delle pareti"
-                             : "Pronta: tocca i punti delle pareti per misurare");
+      if(fuoriStandard) toast("⚠ Planimetria fuori standard: correggi la scala con un dato noto");
+      else toast(mmPerPixel==null ? "Foto caricata — imposta la scala, poi tocca i punti delle pareti"
+                                  : "Pronta: tocca i punti delle pareti per misurare");
     }catch(err){
       console.error(err);
       toast("Errore nel caricamento del file");
@@ -548,6 +570,8 @@
       // tolerate spaced digits, e.g. "Scala 1 : 2 0 0"
       const m=txt.match(/scala\s*1\s*[:\.\-]?\s*([\d\s]{2,8})/i);
       if(m){ const n=parseInt(m[1].replace(/\s+/g,""),10); if(n>=10&&n<=5000) detected=n; }
+      // old scans: "Formato di acquisizione: fuori standard (250X360)" squeezed onto an A4 page
+      if(/fuori\s*standard/i.test(txt)) fuoriStandard=true;
     }catch(e){}
     if(detected){ scaleRatio=detected; $("scaleRatio").value=detected; toast("Scala rilevata: 1:"+detected); }
     else toast("Scala impostata a 1:"+scaleRatio+" (standard Catasto) — verifica in alto");
@@ -1048,8 +1072,8 @@
     const v=parseInt($("scaleRatio").value,10);
     if(!v||v<1){toast("Valore scala non valido");return;}
     scaleRatio=v;
-    if(sourceType==="pdf"){ recomputePdfScale(); updateBadge(); renderResults(); draw(); toast("Scala impostata 1:"+v); }
-    else { toast("Per le foto usa 🎯 Calibra"); }
+    if(sourceType==="pdf"){ scaleCorrected=false; recomputePdfScale(); updateBadge(); renderResults(); draw(); toast("Scala impostata 1:"+v); }
+    else { toast("Per le foto usa 📏 Con una lunghezza nota"); }
   };
 
   // calibration modal
@@ -1062,9 +1086,34 @@
     const dpx=dist(calibPts[0],calibPts[1]);
     if(dpx<2){toast("Punti troppo vicini, riprova");return;}
     mmPerPixel=(val*unit)/dpx;
+    scaleCorrected=true; $("fsWarn").style.display="none";
     closeCalib(); calibPts=[]; setMode("measure");
     updateBadge(); renderResults(); draw();
-    toast("Scala calibrata ✓");
+    toast("Scala corretta ✓ — tutte le misure aggiornate");
+  };
+
+  // correct the scale with a known LENGTH (two points) — works on PDFs too
+  $("fixLen").onclick=()=>{
+    if(!base){ toast("Carica prima una planimetria"); return; }
+    setMode("calibrate");
+    toast("Tocca i due estremi di una misura che conosci");
+  };
+
+  // correct the scale with a known AREA of a traced zone (e.g. from the APE)
+  $("applyArea").onclick=()=>{
+    if(!base){ toast("Carica prima una planimetria"); return; }
+    const real=parseFloat($("realArea").value);
+    if(!(real>0)){ toast("Inserisci la superficie reale in m²"); return; }
+    if(mmPerPixel==null){ toast("Prima imposta una scala (anche approssimativa)"); return; }
+    const zones=(current&&current.points.length>=3? walls.concat([current]) : walls).filter(w=>w.points.length>=3);
+    const z = (selected && selected.points.length>=3) ? selected : (zones.length===1 ? zones[0] : null);
+    if(!z){ toast(zones.length? "Tocca la zona di cui conosci la superficie, poi Applica" : "Prima traccia il contorno della zona (3+ punti)"); return; }
+    const measured=areaM2(z.points);
+    if(!(measured>0)){ toast("Zona non valida"); return; }
+    mmPerPixel *= Math.sqrt(real/measured);     // area scales with the square of the length scale
+    scaleCorrected=true; $("fsWarn").style.display="none";
+    updateBadge(); renderResults(); draw();
+    toast("Scala corretta ✓ — la zona ora misura "+real.toFixed(2)+" m²");
   };
 
   // file inputs
