@@ -275,7 +275,9 @@
   let current = null;         // current wall
   let selected = null;        // wall tapped for highlight/read
   let calibPts = [];
-  let fuoriStandard = false;  // PDF says "fuori standard" → auto scale unreliable
+  let fuoriStandard = false;  // PDF says "fuori standard" (drawing shrunk onto A4)
+  let blueScale = false;      // scale taken from the blue ticks (most reliable)
+  let metersPerTick = 10;     // "10 metri" between two blue ticks
   let scaleCorrected = false; // user corrected the scale by a known length/area
   let cropRect = null;        // {x0,y0,x1,y1} in base-image coords: restrict detection to this box
   let cropDrag = null;        // {sx,sy,ex,ey} screen coords while drawing the box
@@ -502,6 +504,7 @@
     if(!base){ b.className="scalebadge"; b.innerHTML="<span>Nessun file</span>"; return; }
     if(mmPerPixel==null){ b.className="scalebadge"; b.innerHTML="<span>⚠ Scala da calibrare</span>"; return; }
     if(scaleCorrected){ b.className="scalebadge active"; b.innerHTML=`<span>Scala <b>corretta</b> ✓ · misure attive</span>`; return; }
+    if(blueScale){ b.className="scalebadge active"; b.innerHTML=`<span>Scala dalle <b>tacche blu</b> ✓ · 1 tacca = ${metersPerTick} m</span>`; return; }
     if(fuoriStandard){ b.className="scalebadge"; b.innerHTML=`<span>⚠ Scala da verificare (fuori standard)</span>`; return; }
     b.className="scalebadge active";
     b.innerHTML = sourceType==="pdf"
@@ -513,7 +516,7 @@
   async function loadFile(file){
     if(!file) return;
     try{
-      fuoriStandard=false; scaleCorrected=false;
+      fuoriStandard=false; scaleCorrected=false; blueScale=false; metersPerTick=10;
       if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){
         await loadPdf(file);
       } else {
@@ -523,11 +526,12 @@
       cropRect=null; cropDrag=null;
       clearMeasures();
       zoomFit();
-      $("fsWarn").style.display = fuoriStandard ? "block" : "none";
+      $("fsWarn").style.display = (fuoriStandard && !blueScale) ? "block" : "none";
       updateBadge(); renderResults();
       setMode("measure");
-      if(fuoriStandard) toast("⚠ Planimetria fuori standard: correggi la scala con un dato noto");
-      else toast(mmPerPixel==null ? "Foto caricata — imposta la scala, poi tocca i punti delle pareti"
+      if(blueScale) toast("✓ Scala presa dalle tacche blu (1 tacca = "+metersPerTick+" m) — tocca i punti delle pareti");
+      else if(fuoriStandard) toast("⚠ Planimetria fuori standard: correggi la scala con un dato noto");
+      else toast(mmPerPixel==null ? "Immagine caricata — imposta la scala, poi tocca i punti delle pareti"
                                   : "Pronta: tocca i punti delle pareti per misurare");
     }catch(err){
       console.error(err);
@@ -545,8 +549,8 @@
     base.getContext("2d").drawImage(img,0,0,imgW,imgH);
     URL.revokeObjectURL(url);
     sourceType="image"; mmPerPixel=null; autoScaleAvailable=false;
-    $("scaleHint").textContent="Foto: la scala non è ricavabile da sola. Usa 🎯 Calibra su una distanza nota.";
-    toast("Foto caricata — calibra la scala con 🎯");
+    $("scaleHint").textContent="Foto: tacche blu non trovate. Imposta la scala con una lunghezza nota.";
+    applyBlueTickScale();   // screenshots of the PDF still have the blue ticks
   }
 
   async function loadPdf(file){
@@ -572,6 +576,9 @@
       if(m){ const n=parseInt(m[1].replace(/\s+/g,""),10); if(n>=10&&n<=5000) detected=n; }
       // old scans: "Formato di acquisizione: fuori standard (250X360)" squeezed onto an A4 page
       if(/fuori\s*standard/i.test(txt)) fuoriStandard=true;
+      // the blue scale bar label, e.g. "10 metri"
+      const mt=txt.match(/(\d+(?:[.,]\d+)?)\s*metri/i);
+      if(mt){ const v=parseFloat(mt[1].replace(",",".")); if(v>0&&v<1000) metersPerTick=v; }
     }catch(e){}
     if(detected){ scaleRatio=detected; $("scaleRatio").value=detected; toast("Scala rilevata: 1:"+detected); }
     else toast("Scala impostata a 1:"+scaleRatio+" (standard Catasto) — verifica in alto");
@@ -579,6 +586,18 @@
     $("scaleHint").textContent = detected
       ? "Scala letta dal PDF (1:"+detected+"). Correggila qui se serve."
       : "Uso la scala 1:"+scaleRatio+" (standard del Catasto residenziale, corretta per la maggior parte delle planimetrie). Se la tua riporta una scala diversa — la trovi scritta accanto a \"Scheda n.\" — cambiala qui e tutte le misure si aggiornano.";
+    applyBlueTickScale();
+  }
+
+  // Best source of scale: the blue ticks (1 interval = metersPerTick m).
+  function applyBlueTickScale(){
+    const tick=detectBlueTicks();
+    if(!tick){ blueScale=false; return false; }
+    mmPerPixel = metersPerTick*1000/tick;
+    blueScale=true;
+    $("scaleHint").textContent = "Scala letta dalle tacche blu dell'Agenzia: tra una tacca e l'altra = "
+      + metersPerTick + " m." + (fuoriStandard ? " Planimetria fuori standard: già compensata." : "");
+    return true;
   }
 
   // ---------- view ----------
@@ -729,6 +748,44 @@
     zoomAt(e.clientX-r.left,e.clientY-r.top, e.deltaY<0?1.12:1/1.12);
   },{passive:false});
   function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+  // ---------- SCALE FROM THE BLUE TICKS (Agenzia delle Entrate reference) ----------
+  // The sheet has a blue frame with short ticks sticking ~3pt outside it. The distance
+  // between two consecutive ticks is always "10 metri" in reality (also on 'fuori
+  // standard' scans, where the ticks shrink together with the drawing).
+  // Returns the tick interval in base-image pixels, or null.
+  function detectBlueTicks(){
+    if(!base) return null;
+    const W=imgW, H=imgH;
+    const d=base.getContext("2d").getImageData(0,0,W,H).data;
+    const blue=new Uint8Array(W*H), rc=new Int32Array(H), cc=new Int32Array(W);
+    for(let y=0,i=0,p=0;y<H;y++) for(let x=0;x<W;x++,i++,p+=4){
+      const r=d[p],g=d[p+1],b=d[p+2];
+      if(b>140 && r<120 && g<120 && (b-r)>60){ blue[i]=1; rc[y]++; cc[x]++; }
+    }
+    const clusters=(arr,gap)=>{ const out=[]; let prev=-1e9,sum=0,n=0;
+      for(const v of arr){ if(v-prev>gap){ if(n) out.push(sum/n); sum=0; n=0; } sum+=v; n++; prev=v; }
+      if(n) out.push(sum/n); return out; };
+    const rows=[], cols=[];
+    for(let y=0;y<H;y++) if(rc[y]>0.5*W) rows.push(y);
+    for(let x=0;x<W;x++) if(cc[x]>0.5*H) cols.push(x);
+    if(!rows.length || !cols.length) return null;
+    const hy=clusters(rows,3), vx=clusters(cols,3);
+    const top=Math.min(...hy), bot=Math.max(...hy), lef=Math.min(...vx), rig=Math.max(...vx);
+    if(bot-top<0.3*H || rig-lef<0.3*W) return null;          // no real frame
+    const off=Math.max(3, Math.round(W*0.0029));              // just outside the frame line
+    const spac=[];
+    const rowTicks=(y)=>{ y=Math.round(y); if(y<0||y>=H) return; const xs=[]; for(let x=0;x<W;x++) if(blue[y*W+x]) xs.push(x);
+      const c=clusters(xs,3); for(let k=1;k<c.length;k++) spac.push(c[k]-c[k-1]); };
+    const colTicks=(x)=>{ x=Math.round(x); if(x<0||x>=W) return; const ys=[]; for(let y=0;y<H;y++) if(blue[y*W+x]) ys.push(y);
+      const c=clusters(ys,3); for(let k=1;k<c.length;k++) spac.push(c[k]-c[k-1]); };
+    rowTicks(top-off); rowTicks(bot+off); colTicks(lef-off); colTicks(rig+off);
+    if(spac.length<3) return null;
+    const s=spac.slice().sort((a,b)=>a-b), med=s[Math.floor(s.length/2)];
+    const good=spac.filter(v=>Math.abs(v-med)<0.03*med);
+    if(good.length<3 || med<0.05*Math.min(W,H)) return null;  // not regular enough → don't trust
+    return good.reduce((a,b)=>a+b,0)/good.length;
+  }
 
   // ---------- geometry helpers for perimeter polygon ----------
   function morphDilate(src,sw,sh,R){
@@ -1072,7 +1129,7 @@
     const v=parseInt($("scaleRatio").value,10);
     if(!v||v<1){toast("Valore scala non valido");return;}
     scaleRatio=v;
-    if(sourceType==="pdf"){ scaleCorrected=false; recomputePdfScale(); updateBadge(); renderResults(); draw(); toast("Scala impostata 1:"+v); }
+    if(sourceType==="pdf"){ scaleCorrected=false; blueScale=false; recomputePdfScale(); updateBadge(); renderResults(); draw(); toast("Scala impostata 1:"+v); }
     else { toast("Per le foto usa 📏 Con una lunghezza nota"); }
   };
 
