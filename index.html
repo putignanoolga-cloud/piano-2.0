@@ -65,6 +65,13 @@
   .seglist{font-size:12.5px; color:var(--muted); line-height:1.7}
   .seglist span{display:inline-block; background:var(--bg); border-radius:6px; padding:1px 7px; margin:2px 3px 0 0; color:var(--ink)}
   .results .none{color:var(--muted); font-size:13px; text-align:center; padding:26px 10px}
+  #totalBar{
+    flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px; background:var(--accent); color:#fff;
+    border-top:1px solid #1b4fc4;
+  }
+  #totalBar span{font-size:13px; opacity:.9; font-weight:600}
+  #totalBar b{font-size:22px; font-weight:700; letter-spacing:-.01em}
 
   /* buttons */
   .btnrow{display:flex; gap:8px; flex-wrap:wrap}
@@ -184,7 +191,7 @@
         <button id="toolCrop">✂️ Solo una zona</button>
         <button id="cropReset" class="ghost">↺ Tutta la pagina</button>
       </div>
-      <div class="hint" id="toolHint">Carica una planimetria: i muri vengono rilevati da soli. Trascina per spostare, pizzica/rotella per lo zoom.</div>
+      <div class="hint" id="toolHint">Tocca i punti delle pareti per misurarle a mano. "Solo una zona" ti avvicina alla parte che ti interessa. "Automaticamente" è opzionale.</div>
       <div id="calibBox" style="display:none; margin-top:10px">
         <button id="calibBtn" style="width:100%; justify-content:center; background:#fff4e6; border-color:#f0c98a; color:#92560a">🎯 Imposta la scala (foto)</button>
         <div class="hint">Questa è una foto: tocca due punti a distanza nota per dare la scala e vedere le misure.</div>
@@ -211,12 +218,15 @@
       <div class="hint" id="scaleHint">Per i PDF del Catasto la scala viene rilevata automaticamente. Puoi correggerla qui.</div>
     </div>
 
-    <div class="panel-sec" style="display:flex; justify-content:space-between; align-items:center">
+    <div class="panel-sec" style="padding-bottom:6px">
       <h3 style="margin:0">Misure</h3>
-      <div style="font-weight:700" id="grandTotal">—</div>
     </div>
     <div class="results" id="results">
       <div class="none">Ancora nessuna misura.</div>
+    </div>
+    <div id="totalBar">
+      <span>Totale appartamento</span>
+      <b id="grandTotal">—</b>
     </div>
   </aside>
 </main>
@@ -453,11 +463,13 @@
         await loadImage(file);
       }
       $("empty").style.display="none";
-      cropRect=null; cropDrag=null;   // new plan → analyse the whole page
+      cropRect=null; cropDrag=null;
       clearMeasures();
       zoomFit();
       updateBadge(); renderResults();
-      runAutoDetect();   // auto-measure walls on load
+      setMode("measure");
+      toast(mmPerPixel==null ? "Foto caricata — imposta la scala, poi tocca i punti delle pareti"
+                             : "Pronta: tocca i punti delle pareti per misurare");
     }catch(err){
       console.error(err);
       toast("Errore nel caricamento del file");
@@ -530,6 +542,15 @@
     view.scale=Math.max(0.1, Math.min(sc,4)); // cap so it never zooms in too far
     view.tx=(s.clientWidth-(mnx+mxx)*view.scale)/2;
     view.ty=(s.clientHeight-(mny+mxy)*view.scale)/2;
+    draw();
+  }
+  function zoomToRect(x0,y0,x1,y1){
+    const bw=x1-x0, bh=y1-y0; if(bw<=0||bh<=0){ zoomFit(); return; }
+    const s=$("stage"), pad=40;
+    const sc=Math.min((s.clientWidth-pad)/bw,(s.clientHeight-pad)/bh);
+    view.scale=Math.max(0.05, Math.min(sc,20));
+    view.tx=(s.clientWidth-(x0+x1)*view.scale)/2;
+    view.ty=(s.clientHeight-(y0+y1)*view.scale)/2;
     draw();
   }
   function zoomAt(cx,cy,factor){
@@ -616,8 +637,10 @@
       const x0=Math.max(0,Math.min(a.x,b.x)), y0=Math.max(0,Math.min(a.y,b.y));
       const x1=Math.min(imgW,Math.max(a.x,b.x)), y1=Math.min(imgH,Math.max(a.y,b.y));
       cropDrag=null; pointers.delete(e.pointerId); if(pointers.size===0){downInfo=null;panStart=null;}
-      if((x1-x0)>15 && (y1-y0)>15){ cropRect={x0,y0,x1,y1}; setMode("measure"); runAutoDetect(); }
-      else { draw(); }
+      if((x1-x0)>15 && (y1-y0)>15){
+        cropRect={x0,y0,x1,y1}; setMode("measure"); zoomToRect(x0,y0,x1,y1);
+        toast("Zona pronta — tocca i punti delle pareti");
+      } else { draw(); }
       return;
     }
     const wasTap = downInfo && !downInfo.moved && (Date.now()-downInfo.t<600) && pointers.size===1;
